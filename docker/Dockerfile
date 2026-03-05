@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ARG RUST_VERSION=1
 ARG DEBIAN_VERSION=bookworm
 
