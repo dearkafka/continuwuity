@@ -1,0 +1,133 @@
+services:
+  # === Reverse proxy — HTTPS + routing ===
+  caddy:
+    image: caddy:latest
+    container_name: caddy-test
+    ports:
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+    networks:
+      - stack
+    depends_on:
+      - continuwuity
+      - cinny
+
+  # === Matrix homeserver with SSO ===
+  continuwuity:
+    image: continuwuity-sso:latest
+    container_name: continuwuity-test
+    volumes:
+      # Local test harness config. Copy `continuwuity.example.toml` to
+      # `continuwuity.toml`; the live file is intentionally untracked.
+      - ./continuwuity.toml:/etc/continuwuity.toml:ro
+      - continuwuity-data:/var/lib/continuwuity
+    environment:
+      CONTINUWUITY_CONFIG: "/etc/continuwuity.toml"
+    networks:
+      - stack
+
+  # === Matrix web client ===
+  cinny:
+    image: cinny-voice:latest
+    container_name: cinny-test
+    volumes:
+      - ./cinny-config.json:/app/config.json:ro
+    networks:
+      - stack
+
+  # === Zitadel: main server (init + setup + start) ===
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    container_name: zitadel-test
+    command: 'start-from-init --masterkey "MasterkeyNeedsToHave32Characters" --tlsMode disabled --steps /zitadel-init-steps.yaml'
+    environment:
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-db
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: 8080
+      ZITADEL_EXTERNALSECURE: "false"
+      ZITADEL_TLS_ENABLED: "false"
+      # Accept requests with any Host header (for Docker internal routing)
+      ZITADEL_SYSTEMDEFAULTS_DOMAINCLAIMED_ENABLED: "false"
+      ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED: "true"
+      # Domain policy: plain usernames without org domain suffix
+      ZITADEL_DEFAULTINSTANCE_ORG_POLICY_DOMAINPOLICY_VALIDATEORGDOMAINS: "false"
+      ZITADEL_DEFAULTINSTANCE_ORG_POLICY_DOMAINPOLICY_USERLOGINMUSTBEDOMAIN: "false"
+      # Machine admin PAT (IAM_OWNER) — written to shared volume
+      ZITADEL_FIRSTINSTANCE_PATPATH: /shared/admin.pat
+      # Login client PAT — written to shared volume
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /shared/login-client.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Login Client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - ./shared:/shared:rw
+      - ./zitadel-init-steps.yaml:/zitadel-init-steps.yaml:ro
+    networks:
+      stack:
+        aliases:
+          - zitadel.internal
+
+  # === Zitadel: login v2 UI ===
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:latest
+    container_name: zitadel-login-test
+    restart: unless-stopped
+    environment:
+      - ZITADEL_API_URL=http://zitadel:8080
+      - NEXT_PUBLIC_BASE_PATH=/ui/v2/login
+      - ZITADEL_SERVICE_USER_TOKEN_FILE=/shared/login-client.pat
+      - CUSTOM_REQUEST_HEADERS=Host:localhost:8080
+      - NODE_ENV=test
+    volumes:
+      - ./shared:/shared:ro
+    networks:
+      - stack
+    depends_on:
+      zitadel:
+        condition: service_healthy
+
+  # === PostgreSQL for Zitadel ===
+  zitadel-db:
+    image: postgres:17-alpine
+    container_name: zitadel-db-test
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 60s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - zitadel-db-data:/var/lib/postgresql/data
+    networks:
+      - stack
+
+volumes:
+  continuwuity-data:
+  zitadel-db-data:
+
+networks:
+  stack:

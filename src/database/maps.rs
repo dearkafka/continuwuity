@@ -11,7 +11,9 @@ pub(super) type Maps = BTreeMap<MapsKey, MapsVal>;
 pub(super) type MapsKey = &'static str;
 pub(super) type MapsVal = Arc<Map>;
 
-pub(super) fn open(db: &Arc<Engine>) -> Result<Maps> { open_list(db, MAPS) }
+pub(super) fn open(db: &Arc<Engine>) -> Result<Maps> {
+	open_list(db, MAPS)
+}
 
 #[tracing::instrument(name = "maps", level = "debug", skip_all)]
 pub(super) fn open_list(db: &Arc<Engine>, maps: &[Descriptor]) -> Result<Maps> {
@@ -424,6 +426,52 @@ pub(super) static MAPS: &[Descriptor] = &[
 	},
 	Descriptor {
 		name: "logintoken_expiresatuserid",
+		..descriptor::RANDOM_SMALL
+	},
+	// OAuth/SSO maps
+	Descriptor {
+		name: "oauthid_session",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oauthuniqid_oauthid",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "userid_oauthid",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "email_userid",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "userid_email",
+		..descriptor::RANDOM_SMALL
+	},
+	// OIDC server maps
+	Descriptor {
+		name: "oidc_signingkey",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oidcclientid_registration",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oidccode_authsession",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oidcreqid_authrequest",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oidcrefresh_session",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oidcuserdevice_refresh",
 		..descriptor::RANDOM_SMALL
 	},
 	Descriptor {

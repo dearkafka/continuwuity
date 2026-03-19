@@ -1,0 +1,39 @@
+# Matrix homeserver + Cinny client
+localhost {
+    tls /certs/localhost+2.pem /certs/localhost+2-key.pem
+
+    # Matrix client-server API → Continuwuity
+    handle /_matrix/* {
+        reverse_proxy continuwuity:8008
+    }
+
+    # Continuwuity internal endpoints (SSO callback, OIDC server)
+    handle /_continuwuity/* {
+        reverse_proxy continuwuity:8008
+    }
+
+    # Well-known endpoints → Continuwuity
+    handle /.well-known/* {
+        reverse_proxy continuwuity:8008
+    }
+
+    # Everything else → Cinny
+    handle {
+        reverse_proxy cinny:80
+    }
+}
+
+# Zitadel identity provider (HTTP, no TLS for local testing)
+:8080 {
+    # Login v2 UI → login container
+    handle /ui/v2/login/* {
+        reverse_proxy zitadel-login:3000
+    }
+
+    # Everything else → Zitadel main server
+    handle {
+        reverse_proxy zitadel:8080 {
+            header_up Host "localhost:8080"
+        }
+    }
+}

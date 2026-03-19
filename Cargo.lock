@@ -452,6 +452,7 @@ dependencies = [
  "axum",
  "axum-core",
  "bytes",
+ "cookie",
  "futures-core",
  "futures-util",
  "headers",
@@ -966,8 +967,10 @@ dependencies = [
  "serde_html_form",
  "serde_json",
  "sha1",
+ "sha2",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1120,6 +1123,7 @@ dependencies = [
  "image",
  "ipaddress",
  "itertools 0.14.0",
+ "jsonwebtoken",
  "ldap3",
  "log",
  "loole",
@@ -1128,11 +1132,13 @@ dependencies = [
  "recaptcha-verify",
  "regex",
  "reqwest",
+ "ring",
  "ruma",
  "rustyline-async",
  "sd-notify",
  "serde",
  "serde-saphyr",
+ "serde_html_form",
  "serde_json",
  "sha2",
  "termimad",
@@ -1235,6 +1241,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "cookie"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ddef33a339a91ea89fb53151bd0a4689cfce27055c291dfa69945475d22c747"
+dependencies = [
+ "percent-encoding",
+ "time",
+ "version_check",
 ]
 
 [[package]]
@@ -2702,6 +2719,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68421373957a1593a767013698dbf206e2b221eefe97a44d98d18672ff38423c"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "9.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+dependencies = [
+ "base64 0.22.1",
+ "js-sys",
+ "ring",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

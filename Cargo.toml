@@ -92,6 +92,7 @@ features = [
     "http2",
     "json",
     "matched-path",
+    "query",
     "tokio",
     "tracing",
 ]
@@ -99,7 +100,7 @@ features = [
 [workspace.dependencies.axum-extra]
 version = "0.12.0"
 default-features = false
-features = ["typed-header", "tracing"]
+features = ["typed-header", "tracing", "cookie"]
 
 [workspace.dependencies.axum-server]
 version = "0.7.2"
@@ -315,6 +316,11 @@ default-features = false
 # Used when hashing the state
 [workspace.dependencies.ring]
 version = "0.17.14"
+default-features = false
+
+# JWT signing for OIDC server
+[workspace.dependencies.jsonwebtoken]
+version = "9"
 default-features = false
 
 # Used to make working with iterators easier, was already a transitive depdendency

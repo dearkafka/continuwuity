@@ -1783,6 +1783,14 @@
 #
 #config_reload_signal = true
 
+# Whether to allow auto-registration of new accounts via SSO when
+# no email allowlist entry or registration token is provided.
+#
+# When false (default), users must either be in the email allowlist
+# or present a valid registration token to create an account via SSO.
+#
+#sso_allow_open_registration = false
+
 [global.tls]
 
 # Path to a valid TLS certificate file.
