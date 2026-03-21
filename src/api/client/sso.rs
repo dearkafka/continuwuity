@@ -114,6 +114,7 @@ pub(crate) fn build_sso_login_type(services: &Services) -> Option<SsoLoginType> 
 pub(crate) async fn sso_login_route(
 	State(services): State<crate::State>,
 	InsecureClientIp(client): InsecureClientIp,
+	uri: http::Uri,
 	body: Ruma<sso_login::v3::Request>,
 ) -> Result<sso_login::v3::Response> {
 	let providers = &services.server.config.identity_provider;
@@ -125,8 +126,9 @@ pub(crate) async fn sso_login_route(
 		.map(|(key, _)| key.clone())
 		.ok_or_else(|| err!(Request(NotFound("No identity provider configured"))))?;
 
+	let action = sso_action_from_uri(&uri);
 	let (location, cookie) =
-		handle_sso_redirect(&services, &default_key, &body.body.redirect_url).await?;
+		handle_sso_redirect(&services, &default_key, &body.body.redirect_url, action).await?;
 
 	Ok(sso_login::v3::Response { location, cookie })
 }
@@ -136,12 +138,23 @@ pub(crate) async fn sso_login_route(
 pub(crate) async fn sso_login_with_provider_route(
 	State(services): State<crate::State>,
 	InsecureClientIp(client): InsecureClientIp,
+	uri: http::Uri,
 	body: Ruma<sso_login_with_provider::v3::Request>,
 ) -> Result<sso_login_with_provider::v3::Response> {
+	let action = sso_action_from_uri(&uri);
 	let (location, cookie) =
-		handle_sso_redirect(&services, &body.body.idp_id, &body.body.redirect_url).await?;
+		handle_sso_redirect(&services, &body.body.idp_id, &body.body.redirect_url, action).await?;
 
 	Ok(sso_login_with_provider::v3::Response { location, cookie })
+}
+
+/// Extract MSC3824 `action` parameter from the request URI query string.
+fn sso_action_from_uri(uri: &http::Uri) -> Option<String> {
+	uri.query().and_then(|q| {
+		url::form_urlencoded::parse(q.as_bytes())
+			.find(|(k, _)| k == "action" || k == "org.matrix.msc3824.action")
+			.map(|(_, v)| v.into_owned())
+	})
 }
 
 /// Core SSO redirect logic.
@@ -149,6 +162,7 @@ async fn handle_sso_redirect(
 	services: &Services,
 	idp_id: &str,
 	redirect_url: &str,
+	action: Option<String>,
 ) -> Result<(String, Option<Cow<'static, str>>)> {
 	let redirect_url: Url = Url::parse(redirect_url)
 		.map_err(|e| err!(Request(InvalidParam("Invalid redirect_url: {e}"))))?;
@@ -201,22 +215,27 @@ async fn handle_sso_redirect(
 	let mut authorize_with_query = authorize_url;
 	authorize_with_query.set_query(Some(&query_str));
 
-	// MSC3824: detect `action=register` in the client's redirect URL.
+	// MSC3824: detect registration intent from the `action` query parameter
+	// on the SSO redirect request itself (not the client's redirect URL).
 	// When the provider has a `registration_url`, send the user there
 	// first with `redirect_uri` pointing back to the authorize endpoint
 	// so they return to the normal OIDC flow after registering.
-	let is_register = redirect_url
-		.query_pairs()
-		.any(|(k, v)| {
-			(k == "action" || k == "org.matrix.msc3824.action") && v == "register"
-		});
+	let is_register = action.as_deref() == Some("register");
 
 	let location = if is_register
 		&& let Some(mut reg_url) = provider.registration_url.clone()
 	{
-		reg_url
-			.query_pairs_mut()
-			.append_pair("redirect_uri", authorize_with_query.as_str());
+		// After registration, redirect the user back to the client (e.g.
+		// Cinny) rather than to the OIDC authorize URL.  Rauthy validates
+		// redirect_uri against registered client_uris, and the full
+		// authorize URL with query params fails that check.  The user will
+		// log in via SSO from the client after completing registration.
+		if let Some(client_url) = services.server.config.well_known.client.as_ref() {
+			let url_str = client_url.as_str().trim_end_matches('/');
+			reg_url
+				.query_pairs_mut()
+				.append_pair("redirect_uri", url_str);
+		}
 		reg_url
 	} else {
 		authorize_with_query
