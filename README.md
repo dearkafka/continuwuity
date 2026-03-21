@@ -4,6 +4,18 @@
 
 ## A community-driven [Matrix](https://matrix.org/) homeserver in Rust
 
+
+>[!WARNING]
+> THIS IS A FORK OF THE MOST AWESOME MATRIX SERVER ^_^
+> It has so far 2 big changes that I do not plan to PR:
+> 1. partial fix of famous [779](https://forgejo.ellis.link/continuwuation/continuwuity/issues/779) issue: so users dont hang on joining rooms. I actually accompanied this with [cinny fix as well](https://github.com/dearkafka/cinny/commit/9de2775891c62720b514f8c86877e49f0518cf2d), so they work together 
+> 2. SSO/OIDC - Native OIDC, defined in MSC3861 and part of Matrix auth 2.0.
+
+
+>[!Note]
+> A few words on SSO. It's obviously not mergeable to origin. I do not plan to PR this and in current form you should not, too. First of all, it uses a bunch of borrowings from Tuwunel. Second, it's idiosyncratic and is not how you do MSC3861 and not how continuwuity devs would do it. This exists solely bc soon I will have to onboard a ton of password-forgetful users and guess what... I have already onboarded some of them in default flow. So here I also imagined some sort of linking of continuwuity auth into SSO. However, this was not a 100% easy thing to hack so I decided to keep it in public.
+BTW this was tested on Zitadel, and then I switched to Rausty.
+
 [![Chat on Matrix](https://img.shields.io/matrix/continuwuity%3Acontinuwuity.org?server_fqdn=matrix.continuwuity.org&fetchMode=summary&logo=matrix)](https://matrix.to/#/#continuwuity:continuwuity.org?via=continuwuity.org&via=ellis.link&via=explodie.org&via=matrix.org) [![Join the space](https://img.shields.io/matrix/space%3Acontinuwuity.org?server_fqdn=matrix.continuwuity.org&fetchMode=summary&logo=matrix&label=space)](https://matrix.to/#/#space:continuwuity.org?via=continuwuity.org&via=ellis.link&via=explodie.org&via=matrix.org)
 
 
