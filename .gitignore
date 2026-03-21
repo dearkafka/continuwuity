@@ -102,6 +102,6 @@ node_modules/
 # Rspress
 doc_build/
 .rspress/
-docker/test-local/certs/
-docker/test-local/continuwuity.toml
-docker/test-local/shared/
+docker/test-local/
+.vexp/
+.claude/settings.local.json

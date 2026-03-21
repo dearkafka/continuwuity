@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use conduwuit::utils::hash;
+
 use super::TOKEN_LENGTH;
 use crate::Ruma;
 
@@ -62,6 +64,13 @@ pub(crate) struct CallbackParams {
 #[derive(Debug, Deserialize)]
 pub(crate) struct TokenFormParams {
 	token: String,
+	sess_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LinkFormParams {
+	username: String,
+	password: String,
 	sess_id: String,
 }
 
@@ -143,6 +152,16 @@ async fn handle_sso_redirect(
 ) -> Result<(String, Option<Cow<'static, str>>)> {
 	let redirect_url: Url = Url::parse(redirect_url)
 		.map_err(|e| err!(Request(InvalidParam("Invalid redirect_url: {e}"))))?;
+
+	// Validate redirect_url origin against the well-known client URL to
+	// prevent open redirects that leak the login token.
+	if let Some(ref allowed) = services.server.config.well_known.client {
+		if redirect_url.scheme() != allowed.scheme() || redirect_url.host() != allowed.host() {
+			return Err!(Request(Forbidden(
+				"redirect_url origin does not match the configured client"
+			)));
+		}
+	}
 
 	let provider = services.oauth.get_provider(idp_id).await?;
 
@@ -237,6 +256,8 @@ pub(crate) async fn sso_callback_route(
 			.error_description
 			.as_deref()
 			.unwrap_or("Unknown error");
+		let error = html_escape(error);
+		let desc = html_escape(desc);
 		return Ok(sso_html_response(format!(
 			"<html><body><h1>Authentication Failed</h1><p>{error}: {desc}</p>\
 			 <p><a href=\"/\">Return to login</a></p></body></html>"
@@ -307,7 +328,7 @@ pub(crate) async fn sso_callback_route(
 			// Clean up old session if different from current.
 			if let Some(old_sess_id) = existing.sess_id.as_deref() {
 				if Some(old_sess_id) != session.sess_id.as_deref() {
-					services.oauth.sessions.delete(old_sess_id);
+					services.oauth.sessions.delete(old_sess_id).await;
 				}
 			}
 			return complete_sso_login(&services, session, user_id, Some(&unique_id)).await;
@@ -331,11 +352,12 @@ pub(crate) async fn sso_callback_route(
 		return complete_sso_login(&services, session, &user_id, Some(&unique_id)).await;
 	}
 
-	// 5. Invite-only SSO registration. Persist the session and prompt for a
-	// registration token instead of hard-failing.
+	// 5. Persist the session and prompt the user. Show the account linking
+	// page first (existing users can verify their password to link), with an
+	// option to switch to the invite-token page for new users.
 	services.oauth.sessions.put(&session, None);
 
-	Ok(sso_html_response(render_token_prompt(sess_id, None)))
+	Ok(sso_html_response(render_link_prompt(sess_id, None)))
 }
 
 /// # `POST /_continuwuity/sso/token_submit`
@@ -404,6 +426,175 @@ pub(crate) async fn sso_token_submit_route(
 	complete_sso_login(&services, session, &user_id, Some(&unique_id)).await
 }
 
+/// # `POST /_continuwuity/sso/link`
+///
+/// Self-service account linking: user enters their existing Matrix username +
+/// password to link their account to their SSO identity. The SSO session must
+/// already have userinfo populated (i.e. the user came through the SSO
+/// callback). On success, stores the email↔user_id mapping and completes
+/// the SSO login flow.
+pub(crate) async fn sso_link_account_route(
+	State(services): State<crate::State>,
+	headers: http::HeaderMap,
+	Form(form): Form<LinkFormParams>,
+) -> Result<axum::response::Response> {
+	let session = services.oauth.sessions.get(&form.sess_id).await?;
+
+	if session.sess_id.as_deref() != Some(form.sess_id.as_str()) {
+		return Err!(Request(Unauthorized("Session ID not recognized.")));
+	}
+
+	validate_grant_session(&session)?;
+
+	let provider_id = session
+		.idp_id
+		.as_deref()
+		.ok_or_else(|| err!(Request(Unauthorized("Missing identity provider in session."))))?;
+	let provider = services.oauth.get_provider(provider_id).await?;
+
+	validate_grant_cookie(&headers, &session, &provider)?;
+
+	let userinfo = session
+		.user_info
+		.as_ref()
+		.ok_or_else(|| err!(Request(NotFound("Session missing userinfo"))))?;
+	let unique_id = conduwuit_service::oauth::unique_id(&provider, &userinfo.sub)?;
+
+	// If user is already linked (race with another tab), just complete login.
+	if let Ok(existing) = services.oauth.sessions.get_by_unique_id(&unique_id).await {
+		if let Some(user_id) = existing.user_id.as_ref() {
+			return complete_sso_login(&services, session, user_id, Some(&unique_id)).await;
+		}
+	}
+
+	// Use a single generic error for all credential failures to prevent
+	// user enumeration (same pattern as m.login.password).
+	let credential_error = "Wrong username or password.";
+
+	// Validate the username — parse with local server name. If the user
+	// provides a full Matrix ID, verify it belongs to this server.
+	let username = form.username.trim();
+	let server_name = &services.server.config.server_name;
+	let user_id = if username.starts_with('@') {
+		let parsed = UserId::parse(username)
+			.map_err(|_| err!(Request(Forbidden("Invalid username."))))?
+			.to_owned();
+		if parsed.server_name() != server_name {
+			return Ok(sso_html_response(render_link_prompt(
+				&form.sess_id,
+				Some(credential_error),
+			)));
+		}
+		parsed
+	} else {
+		UserId::parse_with_server_name(username, server_name)
+			.map_err(|_| err!(Request(Forbidden("Invalid username."))))?
+	};
+
+	if !services.users.exists(&user_id).await {
+		return Ok(sso_html_response(render_link_prompt(
+			&form.sess_id,
+			Some(credential_error),
+		)));
+	}
+
+	// Only allow linking to password-origin accounts (or legacy accounts with
+	// no origin set). SSO-origin accounts should use the returning user flow.
+	if services
+		.users
+		.origin(&user_id)
+		.await
+		.is_ok_and(|origin| origin != "password")
+	{
+		return Ok(sso_html_response(render_link_prompt(
+			&form.sess_id,
+			Some(credential_error),
+		)));
+	}
+
+	// Verify password.
+	let password_hash = services
+		.users
+		.password_hash(&user_id)
+		.await
+		.map_err(|_| err!(Request(Forbidden("Wrong username or password."))))?;
+
+	if password_hash.is_empty() {
+		return Ok(sso_html_response(render_link_prompt(
+			&form.sess_id,
+			Some(credential_error),
+		)));
+	}
+
+	if hash::verify_password(&form.password, &password_hash).is_err() {
+		return Ok(sso_html_response(render_link_prompt(
+			&form.sess_id,
+			Some(credential_error),
+		)));
+	}
+
+	// Password verified — store the email mapping and complete SSO login.
+	store_email_mapping(&services, &provider, &user_id, userinfo).await;
+
+	info!(%user_id, "Account linked to SSO identity via self-service");
+	if services.server.config.admin_room_notices {
+		let idp_name = provider.name.as_deref().unwrap_or(provider.brand.as_str());
+		services
+			.admin
+			.notice(&format!(
+				"User \"{user_id}\" linked their account to {idp_name} via self-service SSO"
+			))
+			.await;
+	}
+
+	complete_sso_login(&services, session, &user_id, Some(&unique_id)).await
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PageParams {
+	sess_id: String,
+}
+
+/// # `GET /_continuwuity/sso/link_page`
+///
+/// Serve the account linking page (navigated from the token page).
+pub(crate) async fn sso_link_page_route(
+	State(services): State<crate::State>,
+	Query(params): Query<PageParams>,
+	headers: http::HeaderMap,
+) -> Result<axum::response::Response> {
+	let session = services.oauth.sessions.get(&params.sess_id).await?;
+	validate_grant_session(&session)?;
+	let provider_id = session
+		.idp_id
+		.as_deref()
+		.ok_or_else(|| err!(Request(Unauthorized("Missing identity provider in session."))))?;
+	let provider = services.oauth.get_provider(provider_id).await?;
+	validate_grant_cookie(&headers, &session, &provider)?;
+
+	Ok(sso_html_response(render_link_prompt(&params.sess_id, None)))
+}
+
+/// # `GET /_continuwuity/sso/token_page`
+///
+/// Serve the invite token page (navigated from the link page).
+pub(crate) async fn sso_token_page_route(
+	State(services): State<crate::State>,
+	Query(params): Query<PageParams>,
+	headers: http::HeaderMap,
+) -> Result<axum::response::Response> {
+	let session = services.oauth.sessions.get(&params.sess_id).await?;
+	validate_grant_session(&session)?;
+	let provider_id = session
+		.idp_id
+		.as_deref()
+		.ok_or_else(|| err!(Request(Unauthorized("Missing identity provider in session."))))?;
+	let provider = services.oauth.get_provider(provider_id).await?;
+	validate_grant_cookie(&headers, &session, &provider)?;
+
+	Ok(sso_html_response(render_token_prompt(&params.sess_id, None)))
+}
+
 /// Complete SSO login for a known user — generate login token and redirect.
 async fn complete_sso_login(
 	services: &Services,
@@ -412,18 +603,36 @@ async fn complete_sso_login(
 	unique_id: Option<&str>,
 ) -> Result<axum::response::Response> {
 	// Auto-create user if in email allowlist but not yet registered.
+	// Only allowed when the provider permits registration.
 	if !services.users.exists(user_id).await {
-		if let Some(userinfo) = &session.user_info {
-			let provider_id = session.idp_id.as_deref().unwrap_or("unknown");
-			if let Ok(provider) = services.oauth.get_provider(provider_id).await {
-				register_user(services, &provider, userinfo, user_id).await?;
-				store_email_mapping(services, &provider, user_id, userinfo).await;
-			}
+		let provider_id = session.idp_id.as_deref().unwrap_or("unknown");
+		let provider = services.oauth.get_provider(provider_id).await.ok();
+		let registration_allowed = provider.as_ref().is_some_and(|p| p.registration);
+
+		if !registration_allowed {
+			return Err!(Request(Forbidden(
+				"Registration is not enabled for this identity provider."
+			)));
+		}
+
+		if let (Some(provider), Some(userinfo)) = (&provider, &session.user_info) {
+			register_user(services, provider, userinfo, user_id).await?;
+			store_email_mapping(services, provider, user_id, userinfo).await;
 		}
 	}
 
+	// Always check active + suspended status before issuing a login token.
 	if !services.users.is_active_local(user_id).await {
 		return Err!(Request(UserDeactivated("This user has been deactivated.")));
+	}
+
+	if services
+		.users
+		.is_suspended(user_id)
+		.await
+		.unwrap_or(false)
+	{
+		return Err!(Request(Forbidden("This user has been suspended.")));
 	}
 
 	let login_token = utils::random_string(TOKEN_LENGTH);
@@ -824,6 +1033,17 @@ async fn set_avatar(services: &Services, user_id: &UserId, avatar_url: &str) -> 
 	use conduwuit_service::media::MXC_LENGTH;
 	use ruma::Mxc;
 
+	// Validate avatar URL to prevent SSRF — only allow https (or http for
+	// providers that don't support TLS in dev).
+	let parsed = Url::parse(avatar_url)
+		.map_err(|_| err!(Request(InvalidParam("Invalid avatar URL"))))?;
+
+	if !matches!(parsed.scheme(), "https" | "http") {
+		return Err!(Request(InvalidParam("Avatar URL must be http(s)")));
+	}
+
+	const MAX_AVATAR_SIZE: usize = 5 * 1024 * 1024; // 5 MiB
+
 	let response = services
 		.client
 		.default
@@ -840,6 +1060,10 @@ async fn set_avatar(services: &Services, user_id: &UserId, avatar_url: &str) -> 
 
 	let bytes = response.bytes().await?;
 
+	if bytes.len() > MAX_AVATAR_SIZE {
+		return Err!(Request(TooLarge("Avatar exceeds 5 MiB size limit")));
+	}
+
 	let media_id = utils::random_string(MXC_LENGTH);
 	let mxc = Mxc {
 		server_name: services.globals.server_name(),
@@ -855,6 +1079,15 @@ async fn set_avatar(services: &Services, user_id: &UserId, avatar_url: &str) -> 
 	services.users.set_avatar_url(user_id, Some(mxc_uri));
 
 	Ok(())
+}
+
+/// Escape a string for safe inclusion in HTML content.
+fn html_escape(s: &str) -> String {
+	s.replace('&', "&amp;")
+		.replace('<', "&lt;")
+		.replace('>', "&gt;")
+		.replace('"', "&quot;")
+		.replace('\'', "&#x27;")
 }
 
 /// Wrap HTML content in a response with a CSP that allows inline styles
@@ -957,6 +1190,117 @@ button:hover {{
 <input type="text" name="token" placeholder="Enter invite token" required autofocus>
 <button type="submit">Continue</button>
 </form>
+<p style="font-size: 0.8rem; color: #6b7280; margin-top: 1rem; text-align: center;"><a href="/_continuwuity/sso/link_page?sess_id={sess_id}" style="color: #60a5fa;">Already have an account? Link it to SSO</a></p>
+</div>
+</body>
+</html>"#
+	)
+}
+
+fn render_link_prompt(sess_id: &str, error: Option<&str>) -> String {
+	let error_html = error.map_or_else(String::new, |message| {
+		format!(r#"<p class="error" role="alert">{message}</p>"#)
+	});
+
+	format!(
+		r#"<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link Your Account</title>
+<style>
+body {{
+	font-family: system-ui, sans-serif;
+	background: #111827;
+	color: #f3f4f6;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 100vh;
+	margin: 0;
+	padding: 1.5rem;
+}}
+.card {{
+	background: #1f2937;
+	border: 1px solid #374151;
+	border-radius: 12px;
+	padding: 2rem;
+	max-width: 420px;
+	width: 100%;
+	box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+}}
+h1 {{
+	font-size: 1.4rem;
+	margin: 0 0 0.75rem;
+}}
+p {{
+	color: #d1d5db;
+	line-height: 1.5;
+	margin: 0 0 1rem;
+}}
+.error {{
+	background: #7f1d1d;
+	border: 1px solid #ef4444;
+	border-radius: 8px;
+	color: #fee2e2;
+	padding: 0.75rem;
+}}
+label {{
+	display: block;
+	font-size: 0.9rem;
+	color: #9ca3af;
+	margin: 0 0 0.3rem;
+}}
+input[type="text"], input[type="password"] {{
+	width: 100%;
+	padding: 0.8rem 0.9rem;
+	border: 1px solid #4b5563;
+	border-radius: 8px;
+	background: #111827;
+	color: inherit;
+	font-size: 1rem;
+	box-sizing: border-box;
+	margin: 0 0 0.75rem;
+}}
+button {{
+	width: 100%;
+	padding: 0.8rem 0.9rem;
+	border: none;
+	border-radius: 8px;
+	background: #2563eb;
+	color: white;
+	font-size: 1rem;
+	font-weight: 600;
+	cursor: pointer;
+	margin-top: 0.25rem;
+}}
+button:hover {{
+	background: #1d4ed8;
+}}
+.hint {{
+	font-size: 0.8rem;
+	color: #6b7280;
+	margin-top: 1rem;
+	text-align: center;
+}}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Link Your Account</h1>
+<p>SSO authentication succeeded. Enter your existing username and password to link your account.</p>
+{error_html}
+<form method="POST" action="/_continuwuity/sso/link">
+<input type="hidden" name="sess_id" value="{sess_id}">
+<label for="username">Username</label>
+<input type="text" id="username" name="username" placeholder="e.g. kafka" required autofocus>
+<label for="password">Password</label>
+<input type="password" id="password" name="password" required>
+<button type="submit">Link &amp; Sign In</button>
+</form>
+<p class="hint">After linking, you can sign in with SSO from now on.</p>
+<p class="hint"><a href="/_continuwuity/sso/token_page?sess_id={sess_id}" style="color: #60a5fa;">Don't have an account? Register with invite token</a></p>
 </div>
 </body>
 </html>"#
@@ -964,10 +1308,13 @@ button:hover {{
 }
 
 fn validate_grant_session(session: &conduwuit_service::oauth::Session) -> Result<()> {
-	if session
+	// Treat a missing expiry as expired (defensive against schema issues or
+	// overflow in `checked_add`).
+	let expired = session
 		.authorize_expires_at
-		.is_some_and(|exp| SystemTime::now() > exp)
-	{
+		.map_or(true, |exp| SystemTime::now() > exp);
+
+	if expired {
 		return Err!(Request(Unauthorized("Authorization grant session has expired.")));
 	}
 
@@ -1018,7 +1365,8 @@ fn validate_grant_cookie(
 }
 
 fn clear_grant_cookie() -> header::HeaderValue {
-	format!("{GRANT_SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly")
+	// Match the original cookie's attributes so the browser clears the right one.
+	format!("{GRANT_SESSION_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly")
 		.parse()
-		.expect("valid header value")
+		.expect("static cookie string is always valid")
 }

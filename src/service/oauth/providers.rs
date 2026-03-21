@@ -176,6 +176,10 @@ async fn configure(
 
 /// Fetch the OIDC discovery document from the provider.
 async fn discover(provider: &Provider, http_client: &reqwest::Client) -> Result<JsonValue> {
+	if !provider.discovery {
+		return Err!(Config("discovery", "Discovery is disabled for this provider"));
+	}
+
 	let url = discovery_url(provider)?;
 	http_client
 		.get(url)

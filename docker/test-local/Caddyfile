@@ -23,17 +23,13 @@ localhost {
     }
 }
 
-# Zitadel identity provider (HTTP, no TLS for local testing)
-:8080 {
-    # Login v2 UI → login container
-    handle /ui/v2/login/* {
-        reverse_proxy zitadel-login:3000
-    }
+# Rauthy identity provider
+localhost:8443 {
+    tls /certs/localhost+2.pem /certs/localhost+2-key.pem
 
-    # Everything else → Zitadel main server
-    handle {
-        reverse_proxy zitadel:8080 {
-            header_up Host "localhost:8080"
+    reverse_proxy rauthy:8443 {
+        transport http {
+            tls_insecure_skip_verify
         }
     }
 }

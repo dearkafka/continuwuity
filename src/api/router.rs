@@ -194,6 +194,18 @@ pub fn build(router: Router<State>, server: &Server) -> Router<State> {
 			"/_continuwuity/sso/token_submit",
 			post(client::sso_token_submit_route),
 		)
+		.route(
+			"/_continuwuity/sso/link",
+			post(client::sso_link_account_route),
+		)
+		.route(
+			"/_continuwuity/sso/link_page",
+			get(client::sso_link_page_route),
+		)
+		.route(
+			"/_continuwuity/sso/token_page",
+			get(client::sso_token_page_route),
+		)
 		// OIDC server endpoints (MSC2964/2965/2966/2967)
 		.route(
 			"/_matrix/client/unstable/org.matrix.msc2965/auth_issuer",

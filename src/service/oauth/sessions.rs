@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::SystemTime};
 
-use conduwuit::Result;
+use conduwuit::{Result, error};
 use database::{Cbor, Deserialized, Map};
 use futures::StreamExt;
 use ruma::{OwnedUserId, UserId};
@@ -70,6 +70,12 @@ pub struct Session {
 
 	/// Last userinfo response.
 	pub user_info: Option<UserInfo>,
+
+	/// Unique identity hash (SHA256 of issuer + sub), used for returning-user
+	/// dedup and session cleanup. Populated by `put()` when a `unique_id` is
+	/// provided.
+	#[serde(default)]
+	pub unique_id: Option<String>,
 }
 
 pub struct Sessions {
@@ -97,14 +103,31 @@ impl Sessions {
 		}
 	}
 
-	/// Store or update a session.
+	/// Store or update a session. When `unique_id` is provided it is
+	/// persisted both as a secondary index and inside the session itself so
+	/// that `delete` can clean up the index without needing provider config.
+	///
+	/// # Panics
+	///
+	/// Never — returns early if `sess_id` is missing (should not happen in
+	/// normal operation).
 	pub fn put(&self, session: &Session, unique_id: Option<&str>) {
-		let sess_id = session
-			.sess_id
-			.as_deref()
-			.expect("Missing sess_id in session");
+		let Some(sess_id) = session.sess_id.as_deref() else {
+			error!("BUG: Sessions::put called without sess_id");
+			return;
+		};
 
-		self.db.oauthid_session.raw_put(sess_id, Cbor(session));
+		// Merge unique_id into the stored session so delete() can find it.
+		let session = if unique_id.is_some() && session.unique_id.as_deref() != unique_id {
+			Session {
+				unique_id: unique_id.map(str::to_owned),
+				..session.clone()
+			}
+		} else {
+			session.clone()
+		};
+
+		self.db.oauthid_session.raw_put(sess_id, Cbor(&session));
 
 		if let Some(unique_id) = unique_id {
 			self.db.oauthuniqid_oauthid.insert(unique_id, sess_id);
@@ -137,8 +160,44 @@ impl Sessions {
 		self.get(&sess_id).await
 	}
 
-	/// Delete a session.
-	pub fn delete(&self, sess_id: &str) {
+	/// Delete a session and clean up all associated index entries.
+	///
+	/// Only removes secondary indexes (`oauthuniqid_oauthid`,
+	/// `userid_oauthid`) if they still point to this session, preventing a
+	/// newer session's entries from being clobbered.
+	pub async fn delete(&self, sess_id: &str) {
+		if let Ok(session) = self.get(sess_id).await {
+			// Clean unique_id index.
+			if let Some(unique_id) = session.unique_id.as_deref() {
+				let still_ours = self
+					.db
+					.oauthuniqid_oauthid
+					.get(unique_id)
+					.await
+					.deserialized::<String>()
+					.is_ok_and(|stored| stored == sess_id);
+
+				if still_ours {
+					self.db.oauthuniqid_oauthid.remove(unique_id);
+				}
+			}
+
+			// Clean user_id index.
+			if let Some(user_id) = session.user_id.as_deref() {
+				let still_ours = self
+					.db
+					.userid_oauthid
+					.get(user_id)
+					.await
+					.deserialized::<String>()
+					.is_ok_and(|stored| stored == sess_id);
+
+				if still_ours {
+					self.db.userid_oauthid.remove(user_id);
+				}
+			}
+		}
+
 		self.db.oauthid_session.remove(sess_id);
 	}
 
@@ -148,27 +207,31 @@ impl Sessions {
 	}
 
 	/// Look up a user_id by email from the allowlist.
+	/// Email is normalized to lowercase for case-insensitive matching.
 	pub async fn get_user_by_email(&self, email: &str) -> Result<String> {
-		self.db.email_userid.get(email).await.deserialized()
+		let email = email.to_lowercase();
+		self.db.email_userid.get(&*email).await.deserialized()
 	}
 
 	/// Store or replace an email ↔ user_id mapping, keeping both indexes in
-	/// sync.
+	/// sync. Email is normalized to lowercase for case-insensitive matching.
 	pub async fn set_email(&self, user_id: &str, email: &str) {
+		let email = email.to_lowercase();
+
 		if let Ok(previous_email) = self.get_email(user_id).await
 			&& previous_email != email
 		{
 			self.db.email_userid.remove(&previous_email);
 		}
 
-		if let Ok(previous_user_id) = self.get_user_by_email(email).await
+		if let Ok(previous_user_id) = self.get_user_by_email(&email).await
 			&& previous_user_id != user_id
 		{
 			self.db.userid_email.remove(&previous_user_id);
 		}
 
-		self.db.email_userid.insert(email, user_id);
-		self.db.userid_email.insert(user_id, email);
+		self.db.email_userid.insert(&*email, user_id);
+		self.db.userid_email.insert(user_id, &*email);
 	}
 
 	/// Get the email for a user.
