@@ -199,6 +199,29 @@ pub enum UserCommand {
 		room_id: OwnedRoomId,
 	},
 
+	/// Set the email address for a user (used for SSO allowlist gating).
+	SetEmail {
+		/// Username of the user
+		username: String,
+		/// Email address to associate
+		email: String,
+	},
+
+	/// Get the email address for a user.
+	GetEmail {
+		/// Username of the user
+		username: String,
+	},
+
+	/// Remove the email address for a user.
+	RemoveEmail {
+		/// Username of the user
+		username: String,
+	},
+
+	/// List all user-email mappings.
+	ListEmails,
+
 	/// Attempts to forcefully redact the specified event ID from the sender
 	///   user
 	///

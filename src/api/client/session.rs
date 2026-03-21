@@ -43,13 +43,28 @@ pub(crate) async fn get_login_types_route(
 	InsecureClientIp(client): InsecureClientIp,
 	_body: Ruma<get_login_types::v3::Request>,
 ) -> Result<get_login_types::v3::Response> {
-	Ok(get_login_types::v3::Response::new(vec![
-		get_login_types::v3::LoginType::Password(PasswordLoginType::default()),
-		get_login_types::v3::LoginType::ApplicationService(ApplicationServiceLoginType::default()),
-		get_login_types::v3::LoginType::Token(TokenLoginType {
-			get_login_token: services.server.config.login_via_existing_session,
-		}),
-	]))
+	let sso_type = super::sso::build_sso_login_type(&services);
+	let has_sso = sso_type.is_some();
+
+	let mut login_types = Vec::new();
+
+	// Hide password login from clients when SSO is configured — SSO is the
+	// primary auth method. Password login still works at the API level for
+	// admin/emergency access, it just isn't advertised.
+	if !has_sso {
+		login_types.push(get_login_types::v3::LoginType::Password(PasswordLoginType::default()));
+	}
+
+	login_types.push(get_login_types::v3::LoginType::ApplicationService(ApplicationServiceLoginType::default()));
+	login_types.push(get_login_types::v3::LoginType::Token(TokenLoginType {
+		get_login_token: services.server.config.login_via_existing_session,
+	}));
+
+	if let Some(sso_type) = sso_type {
+		login_types.push(get_login_types::v3::LoginType::Sso(sso_type));
+	}
+
+	Ok(get_login_types::v3::Response::new(login_types))
 }
 
 /// Authenticates the given user by its ID and its password.
@@ -106,8 +121,9 @@ pub(super) async fn ldap_login(
 	password: &str,
 ) -> Result<OwnedUserId> {
 	let (user_dn, is_ldap_admin) = match services.config.ldap.bind_dn.as_ref() {
-		| Some(bind_dn) if bind_dn.contains("{username}") =>
-			(bind_dn.replace("{username}", lowercased_user_id.localpart()), None),
+		| Some(bind_dn) if bind_dn.contains("{username}") => {
+			(bind_dn.replace("{username}", lowercased_user_id.localpart()), None)
+		},
 		| _ => {
 			debug!("Searching user in LDAP");
 
@@ -247,9 +263,9 @@ pub(crate) async fn login_route(
 		}) => handle_login(&services, &body, identifier.as_ref(), password, user.as_ref()).await?,
 		| login::v3::LoginInfo::Token(login::v3::Token { token }) => {
 			debug!("Got token login type");
-			if !services.server.config.login_via_existing_session {
-				return Err!(Request(Unknown("Token login is not enabled.")));
-			}
+			// Always accept m.login.token — tokens are single-use and short-lived.
+			// Creation is gated by SSO (provider auth) or login_via_existing_session
+			// (get_login_token route). Rejecting consumption here would break SSO.
 			services.users.find_from_login_token(token).await?
 		},
 		#[allow(deprecated)]

@@ -184,6 +184,77 @@ pub fn build(router: Router<State>, server: &Server) -> Router<State> {
 			"/_matrix/client/unstable/im.nheko.summary/rooms/{room_id_or_alias}/summary",
 			get(client::get_room_summary_legacy)
 		)
+		.ruma_route(&client::sso_login_route)
+		.ruma_route(&client::sso_login_with_provider_route)
+		.route(
+			"/_matrix/client/unstable/login/sso/callback/{idp_id}",
+			get(client::sso_callback_route),
+		)
+		.route(
+			"/_continuwuity/sso/token_submit",
+			post(client::sso_token_submit_route),
+		)
+		.route(
+			"/_continuwuity/sso/link",
+			post(client::sso_link_account_route),
+		)
+		.route(
+			"/_continuwuity/sso/link_page",
+			get(client::sso_link_page_route),
+		)
+		.route(
+			"/_continuwuity/sso/token_page",
+			get(client::sso_token_page_route),
+		)
+		// OIDC server endpoints (MSC2964/2965/2966/2967)
+		.route(
+			"/_matrix/client/unstable/org.matrix.msc2965/auth_issuer",
+			get(client::auth_issuer_route),
+		)
+		.route(
+			"/_matrix/client/v1/auth_metadata",
+			get(client::openid_configuration_route),
+		)
+		.route(
+			"/_matrix/client/unstable/org.matrix.msc2965/auth_metadata",
+			get(client::openid_configuration_route),
+		)
+		.route(
+			"/.well-known/openid-configuration",
+			get(client::openid_configuration_route),
+		)
+		.route(
+			"/_continuwuity/oidc/authorize",
+			get(client::authorize_route),
+		)
+		.route(
+			"/_continuwuity/oidc/_complete",
+			get(client::complete_route),
+		)
+		.route(
+			"/_continuwuity/oidc/token",
+			post(client::token_route),
+		)
+		.route(
+			"/_continuwuity/oidc/registration",
+			post(client::registration_route),
+		)
+		.route(
+			"/_continuwuity/oidc/revoke",
+			post(client::revoke_route),
+		)
+		.route(
+			"/_continuwuity/oidc/jwks",
+			get(client::jwks_route),
+		)
+		.route(
+			"/_continuwuity/oidc/userinfo",
+			get(client::userinfo_route),
+		)
+		.route(
+			"/_continuwuity/oidc/account",
+			get(client::account_route),
+		)
 		.ruma_route(&client::get_suspended_status)
 		.ruma_route(&client::put_suspended_status)
 		.ruma_route(&client::well_known_support)

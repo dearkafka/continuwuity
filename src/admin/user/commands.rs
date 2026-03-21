@@ -297,6 +297,80 @@ pub(super) async fn reset_password(
 }
 
 #[admin_command]
+pub(super) async fn set_email(&self, username: String, email: String) -> Result {
+	let user_id = parse_local_user_id(self.services, &username)?;
+
+	self.services
+		.oauth
+		.sessions
+		.set_email(user_id.as_str(), &email)
+		.await;
+
+	self.write_str(&format!("Set email for {user_id}: `{email}`"))
+		.await
+}
+
+#[admin_command]
+pub(super) async fn get_email(&self, username: String) -> Result {
+	let user_id = parse_local_user_id(self.services, &username)?;
+
+	match self
+		.services
+		.oauth
+		.sessions
+		.get_email(user_id.as_str())
+		.await
+	{
+		| Ok(email) => {
+			self.write_str(&format!("Email for {user_id}: `{email}`"))
+				.await
+		},
+		| Err(_) => self.write_str(&format!("No email set for {user_id}")).await,
+	}
+}
+
+#[admin_command]
+pub(super) async fn remove_email(&self, username: String) -> Result {
+	let user_id = parse_local_user_id(self.services, &username)?;
+
+	match self
+		.services
+		.oauth
+		.sessions
+		.get_email(user_id.as_str())
+		.await
+	{
+		| Ok(email) => {
+			self.services
+				.oauth
+				.sessions
+				.remove_email(user_id.as_str(), &email);
+			self.write_str(&format!("Removed email `{email}` for {user_id}"))
+				.await
+		},
+		| Err(_) => self.write_str(&format!("No email set for {user_id}")).await,
+	}
+}
+
+#[admin_command]
+pub(super) async fn list_emails(&self) -> Result {
+	let emails: Vec<(String, String)> =
+		self.services.oauth.sessions.list_emails().collect().await;
+
+	if emails.is_empty() {
+		return self.write_str("No email mappings found.").await;
+	}
+
+	let mut msg = format!("Found {} email mapping(s):\n```\n", emails.len());
+	for (email, user_id) in &emails {
+		msg += &format!("{email} → {user_id}\n");
+	}
+	msg += "```";
+
+	self.write_str(&msg).await
+}
+
+#[admin_command]
 pub(super) async fn deactivate_all(&self, no_leave_rooms: bool, force: bool) -> Result {
 	if self.body.len() < 2
 		|| !self.body[0].trim().starts_with("```")

@@ -53,7 +53,7 @@ use crate::{Result, err, error::Error, utils::sys};
 ### For more information, see:
 ### https://continuwuity.org/configuration.html
 "#,
-	ignore = "config_paths catchall"
+	ignore = "config_paths catchall identity_provider"
 )]
 pub struct Config {
 	// Paths to config file(s). Not supposed to be set manually in the config file,
@@ -2072,6 +2072,25 @@ pub struct Config {
 	#[serde(default)]
 	pub ldap: LdapConfig,
 
+	/// SSO identity providers for OAuth2/OIDC login.
+	///
+	/// Each entry configures an external OAuth2 provider (Google, GitHub,
+	/// etc.) that users can authenticate with.
+	///
+	/// display: nested
+	#[serde(default)]
+	pub identity_provider: BTreeMap<String, IdentityProvider>,
+
+	/// Whether to allow auto-registration of new accounts via SSO when
+	/// no email allowlist entry or registration token is provided.
+	///
+	/// When false (default), users must either be in the email allowlist
+	/// or present a valid registration token to create an account via SSO.
+	///
+	/// default: false
+	#[serde(default)]
+	pub sso_allow_open_registration: bool,
+
 	/// Configuration for antispam support
 	/// display: nested
 	#[serde(default)]
@@ -2334,6 +2353,181 @@ pub struct LdapConfig {
 	pub admin_filter: String,
 }
 
+/// Configuration for an external OAuth2/OIDC identity provider used for
+/// SSO login.
+#[derive(Clone, Debug, Deserialize)]
+pub struct IdentityProvider {
+	/// Provider brand identifier for client button styling.
+	/// Recognized values: "google", "github", "gitlab", "apple", "facebook",
+	/// "twitter"
+	///
+	/// example: "google"
+	#[serde(default)]
+	pub brand: String,
+
+	/// OAuth2 client ID registered with the provider.
+	///
+	/// example: "123456.apps.googleusercontent.com"
+	#[serde(default)]
+	pub client_id: String,
+
+	/// OAuth2 client secret. Prefer `client_secret_file` for production.
+	///
+	/// example: "GOCSPX-..."
+	#[serde(default)]
+	pub client_secret: Option<String>,
+
+	/// Path to a file containing the OAuth2 client secret.
+	///
+	/// example: "/run/secrets/google_oauth"
+	#[serde(default)]
+	pub client_secret_file: Option<PathBuf>,
+
+	/// OIDC issuer URL. When set, endpoints are auto-discovered via
+	/// `{issuer_url}/.well-known/openid-configuration`.
+	///
+	/// example: "https://accounts.google.com"
+	#[serde(default)]
+	pub issuer_url: Option<Url>,
+
+	/// OAuth2 authorization endpoint URL.
+	/// Auto-discovered from `issuer_url` if not set.
+	///
+	/// example: "https://accounts.google.com/o/oauth2/v2/auth"
+	#[serde(default)]
+	pub authorization_url: Option<Url>,
+
+	/// OAuth2 token endpoint URL.
+	/// Auto-discovered from `issuer_url` if not set.
+	///
+	/// example: "https://oauth2.googleapis.com/token"
+	#[serde(default)]
+	pub token_url: Option<Url>,
+
+	/// OAuth2 userinfo endpoint URL.
+	/// Auto-discovered from `issuer_url` if not set.
+	///
+	/// example: "https://openidconnect.googleapis.com/v1/userinfo"
+	#[serde(default)]
+	pub userinfo_url: Option<Url>,
+
+	/// OAuth2 revocation endpoint URL.
+	///
+	/// example: "https://oauth2.googleapis.com/revoke"
+	#[serde(default)]
+	pub revocation_url: Option<Url>,
+
+	/// Callback URL registered with the provider. If not set, derived from
+	/// `well_known.client`.
+	///
+	/// example: "https://mx.example.com/_matrix/client/unstable/login/sso/callback/google"
+	#[serde(default)]
+	pub callback_url: Option<Url>,
+
+	/// Whether to auto-discover endpoints via OIDC discovery.
+	///
+	/// default: true
+	#[serde(default = "default_idp_discovery")]
+	pub discovery: bool,
+
+	/// OIDC discovery URL override.
+	///
+	/// example: "https://accounts.google.com/.well-known/openid-configuration"
+	#[serde(default)]
+	pub discovery_url: Option<Url>,
+
+	/// Extra path prepended during discovery (e.g., "login/oauth/" for
+	/// GitHub).
+	///
+	/// default: ""
+	#[serde(default)]
+	pub base_path: String,
+
+	/// Whether this is the default provider when no idpId is specified.
+	///
+	/// default: false
+	#[serde(default)]
+	pub default: bool,
+
+	/// Display name for this provider shown in client UI.
+	///
+	/// example: "Google"
+	#[serde(default)]
+	pub name: Option<String>,
+
+	/// MXC URI for the provider icon.
+	///
+	/// example: "mxc://example.org/abc123"
+	#[serde(default)]
+	pub icon: Option<String>,
+
+	/// OAuth2 scopes to request.
+	///
+	/// default: ["openid", "email", "profile"]
+	#[serde(default = "default_idp_scopes")]
+	pub scope: Vec<String>,
+
+	/// Claims to consider for deriving the Matrix username, in priority
+	/// order.
+	///
+	/// default: ["preferred_username", "username", "email"]
+	#[serde(default = "default_idp_userid_claims")]
+	pub userid_claims: Vec<String>,
+
+	/// Grant session duration in seconds. The OAuth2 authorization must
+	/// complete within this time.
+	///
+	/// default: 300
+	#[serde(default = "default_idp_grant_session_duration")]
+	pub grant_session_duration: Option<u64>,
+
+	/// Whether new user registration is allowed through this provider.
+	///
+	/// default: true
+	#[serde(default = "default_true")]
+	pub registration: bool,
+
+	/// Whether to trust this provider for linking to existing Matrix
+	/// accounts via email allowlist and for persisting email mappings from
+	/// SSO claims.
+	///
+	/// Trusted email-based linking requires the provider to supply a
+	/// verified email claim.
+	///
+	/// default: false
+	#[serde(default)]
+	pub trusted: bool,
+}
+
+impl IdentityProvider {
+	/// Returns the config key used as this provider's ID.
+	/// In the TOML config, the key in `[global.identity_provider.KEY]` is
+	/// the provider ID.
+	pub fn id_from_key(key: &str) -> String {
+		key.to_owned()
+	}
+}
+
+fn default_idp_discovery() -> bool {
+	true
+}
+
+fn default_idp_scopes() -> Vec<String> {
+	vec!["openid".to_owned(), "email".to_owned(), "profile".to_owned()]
+}
+
+fn default_idp_userid_claims() -> Vec<String> {
+	vec!["preferred_username".to_owned(), "username".to_owned(), "email".to_owned()]
+}
+
+fn default_idp_grant_session_duration() -> Option<u64> {
+	Some(300)
+}
+
+fn default_true() -> bool {
+	true
+}
+
 #[derive(Deserialize, Clone, Debug)]
 #[serde(transparent)]
 struct ListeningPort {
@@ -2487,10 +2681,14 @@ impl Config {
 		}
 	}
 
-	pub fn check(&self) -> Result<(), Error> { check(self) }
+	pub fn check(&self) -> Result<(), Error> {
+		check(self)
+	}
 }
 
-fn true_fn() -> bool { true }
+fn true_fn() -> bool {
+	true
+}
 
 fn default_address() -> ListeningAddr {
 	ListeningAddr {
@@ -2498,19 +2696,33 @@ fn default_address() -> ListeningAddr {
 	}
 }
 
-fn default_port() -> ListeningPort { ListeningPort { ports: Left(8008) } }
+fn default_port() -> ListeningPort {
+	ListeningPort { ports: Left(8008) }
+}
 
-fn default_unix_socket_perms() -> u32 { 660 }
+fn default_unix_socket_perms() -> u32 {
+	660
+}
 
-fn default_database_backups_to_keep() -> i16 { 1 }
+fn default_database_backups_to_keep() -> i16 {
+	1
+}
 
-fn default_db_write_buffer_capacity_mb() -> f64 { 48.0 + parallelism_scaled_f64(4.0) }
+fn default_db_write_buffer_capacity_mb() -> f64 {
+	48.0 + parallelism_scaled_f64(4.0)
+}
 
-fn default_db_cache_capacity_mb() -> f64 { 128.0 + parallelism_scaled_f64(64.0) }
+fn default_db_cache_capacity_mb() -> f64 {
+	128.0 + parallelism_scaled_f64(64.0)
+}
 
-fn default_pdu_cache_capacity() -> u32 { parallelism_scaled_u32(10_000).saturating_add(100_000) }
+fn default_pdu_cache_capacity() -> u32 {
+	parallelism_scaled_u32(10_000).saturating_add(100_000)
+}
 
-fn default_cache_capacity_modifier() -> f64 { 1.0 }
+fn default_cache_capacity_modifier() -> f64 {
+	1.0
+}
 
 fn default_auth_chain_cache_capacity() -> u32 {
 	parallelism_scaled_u32(10_000).saturating_add(100_000)
@@ -2540,73 +2752,137 @@ fn default_servernameevent_data_cache_capacity() -> u32 {
 	parallelism_scaled_u32(100_000).saturating_add(500_000)
 }
 
-fn default_stateinfo_cache_capacity() -> u32 { parallelism_scaled_u32(100) }
+fn default_stateinfo_cache_capacity() -> u32 {
+	parallelism_scaled_u32(100)
+}
 
-fn default_roomid_spacehierarchy_cache_capacity() -> u32 { parallelism_scaled_u32(1000) }
+fn default_roomid_spacehierarchy_cache_capacity() -> u32 {
+	parallelism_scaled_u32(1000)
+}
 
-fn default_dns_cache_entries() -> u32 { 32768 }
+fn default_dns_cache_entries() -> u32 {
+	32768
+}
 
-fn default_dns_min_ttl() -> u64 { 60 * 180 }
+fn default_dns_min_ttl() -> u64 {
+	60 * 180
+}
 
-fn default_dns_min_ttl_nxdomain() -> u64 { 60 * 60 * 24 * 3 }
+fn default_dns_min_ttl_nxdomain() -> u64 {
+	60 * 60 * 24 * 3
+}
 
-fn default_dns_attempts() -> u16 { 10 }
+fn default_dns_attempts() -> u16 {
+	10
+}
 
-fn default_dns_timeout() -> u64 { 10 }
+fn default_dns_timeout() -> u64 {
+	10
+}
 
-fn default_ip_lookup_strategy() -> u8 { 5 }
+fn default_ip_lookup_strategy() -> u8 {
+	5
+}
 
 fn default_max_request_size() -> usize {
 	20 * 1024 * 1024 // Default to 20 MB
 }
 
-fn default_request_conn_timeout() -> u64 { 10 }
+fn default_request_conn_timeout() -> u64 {
+	10
+}
 
-fn default_request_timeout() -> u64 { 35 }
+fn default_request_timeout() -> u64 {
+	35
+}
 
-fn default_request_total_timeout() -> u64 { 320 }
+fn default_request_total_timeout() -> u64 {
+	320
+}
 
-fn default_request_idle_timeout() -> u64 { 5 }
+fn default_request_idle_timeout() -> u64 {
+	5
+}
 
-fn default_request_idle_per_host() -> u16 { 1 }
+fn default_request_idle_per_host() -> u16 {
+	1
+}
 
-fn default_well_known_conn_timeout() -> u64 { 6 }
+fn default_well_known_conn_timeout() -> u64 {
+	6
+}
 
-fn default_well_known_timeout() -> u64 { 10 }
+fn default_well_known_timeout() -> u64 {
+	10
+}
 
-fn default_federation_conn_timeout() -> u64 { 10 }
+fn default_federation_conn_timeout() -> u64 {
+	10
+}
 
-fn default_federation_timeout() -> u64 { 60 }
+fn default_federation_timeout() -> u64 {
+	60
+}
 
-fn default_policy_server_request_timeout() -> u64 { 10 }
+fn default_policy_server_request_timeout() -> u64 {
+	10
+}
 
-fn default_federation_idle_timeout() -> u64 { 25 }
+fn default_federation_idle_timeout() -> u64 {
+	25
+}
 
-fn default_federation_idle_per_host() -> u16 { 1 }
+fn default_federation_idle_per_host() -> u16 {
+	1
+}
 
-fn default_sender_timeout() -> u64 { 180 }
+fn default_sender_timeout() -> u64 {
+	180
+}
 
-fn default_sender_idle_timeout() -> u64 { 180 }
+fn default_sender_idle_timeout() -> u64 {
+	180
+}
 
-fn default_sender_retry_backoff_limit() -> u64 { 86400 }
+fn default_sender_retry_backoff_limit() -> u64 {
+	86400
+}
 
-fn default_appservice_timeout() -> u64 { 35 }
+fn default_appservice_timeout() -> u64 {
+	35
+}
 
-fn default_appservice_idle_timeout() -> u64 { 300 }
+fn default_appservice_idle_timeout() -> u64 {
+	300
+}
 
-fn default_pusher_conn_timeout() -> u64 { 15 }
+fn default_pusher_conn_timeout() -> u64 {
+	15
+}
 
-fn default_pusher_timeout() -> u64 { 60 }
+fn default_pusher_timeout() -> u64 {
+	60
+}
 
-fn default_pusher_idle_timeout() -> u64 { 15 }
+fn default_pusher_idle_timeout() -> u64 {
+	15
+}
 
-fn default_max_fetch_prev_events() -> u16 { 192_u16 }
+fn default_max_fetch_prev_events() -> u16 {
+	192_u16
+}
 
-fn default_max_concurrent_inbound_transactions() -> usize { 150 }
+fn default_max_concurrent_inbound_transactions() -> usize {
+	150
+}
 
-fn default_transaction_id_cache_max_age_secs() -> u64 { 60 * 60 * 2 }
+fn default_transaction_id_cache_max_age_secs() -> u64 {
+	60 * 60 * 2
+}
 
-fn default_transaction_id_cache_max_entries() -> usize { 8192 }
+fn default_transaction_id_cache_max_entries() -> usize {
+	8192
+}
 
 fn default_tracing_flame_filter() -> String {
 	cfg!(debug_assertions)
@@ -2622,9 +2898,13 @@ fn default_otlp_filter() -> String {
 		.to_owned()
 }
 
-fn default_otlp_protocol() -> String { "http".to_owned() }
+fn default_otlp_protocol() -> String {
+	"http".to_owned()
+}
 
-fn default_tracing_flame_output_path() -> String { "./tracing.folded".to_owned() }
+fn default_tracing_flame_output_path() -> String {
+	"./tracing.folded".to_owned()
+}
 
 fn default_trusted_servers() -> Vec<OwnedServerName> {
 	vec![OwnedServerName::try_from("matrix.org").unwrap()]
@@ -2640,40 +2920,70 @@ pub fn default_log() -> String {
 }
 
 #[must_use]
-pub fn default_log_span_events() -> String { "none".into() }
+pub fn default_log_span_events() -> String {
+	"none".into()
+}
 
-fn default_notification_push_path() -> String { "/_matrix/push/v1/notify".to_owned() }
+fn default_notification_push_path() -> String {
+	"/_matrix/push/v1/notify".to_owned()
+}
 
-fn default_openid_token_ttl() -> u64 { 60 * 60 }
+fn default_openid_token_ttl() -> u64 {
+	60 * 60
+}
 
-fn default_login_token_ttl() -> u64 { 2 * 60 * 1000 }
+fn default_login_token_ttl() -> u64 {
+	2 * 60 * 1000
+}
 
-fn default_turn_ttl() -> u64 { 60 * 60 * 24 }
+fn default_turn_ttl() -> u64 {
+	60 * 60 * 24
+}
 
-fn default_presence_idle_timeout_s() -> u64 { 5 * 60 }
+fn default_presence_idle_timeout_s() -> u64 {
+	5 * 60
+}
 
-fn default_presence_offline_timeout_s() -> u64 { 30 * 60 }
+fn default_presence_offline_timeout_s() -> u64 {
+	30 * 60
+}
 
-fn default_typing_federation_timeout_s() -> u64 { 30 }
+fn default_typing_federation_timeout_s() -> u64 {
+	30
+}
 
-fn default_typing_client_timeout_min_s() -> u64 { 15 }
+fn default_typing_client_timeout_min_s() -> u64 {
+	15
+}
 
-fn default_typing_client_timeout_max_s() -> u64 { 45 }
+fn default_typing_client_timeout_max_s() -> u64 {
+	45
+}
 
-fn default_rocksdb_recovery_mode() -> u8 { 1 }
+fn default_rocksdb_recovery_mode() -> u8 {
+	1
+}
 
-fn default_rocksdb_log_level() -> String { "error".to_owned() }
+fn default_rocksdb_log_level() -> String {
+	"error".to_owned()
+}
 
-fn default_rocksdb_log_time_to_roll() -> usize { 0 }
+fn default_rocksdb_log_time_to_roll() -> usize {
+	0
+}
 
-fn default_rocksdb_max_log_files() -> usize { 3 }
+fn default_rocksdb_max_log_files() -> usize {
+	3
+}
 
 fn default_rocksdb_max_log_file_size() -> usize {
 	// 4 megabytes
 	4 * 1024 * 1024
 }
 
-fn default_rocksdb_parallelism_threads() -> usize { 0 }
+fn default_rocksdb_parallelism_threads() -> usize {
+	0
+}
 
 fn default_rocksdb_compression_algo() -> String {
 	cfg!(feature = "zstd_compression")
@@ -2682,26 +2992,36 @@ fn default_rocksdb_compression_algo() -> String {
 		.to_owned()
 }
 
-fn default_rocksdb_wal_compression() -> String { "zstd".to_owned() }
+fn default_rocksdb_wal_compression() -> String {
+	"zstd".to_owned()
+}
 
 /// Default RocksDB compression level is 32767, which is internally read by
 /// RocksDB as the default magic number and translated to the library's default
 /// compression level as they all differ. See their `kDefaultCompressionLevel`.
 #[allow(clippy::doc_markdown)]
-fn default_rocksdb_compression_level() -> i32 { 32767 }
+fn default_rocksdb_compression_level() -> i32 {
+	32767
+}
 
 /// Default RocksDB compression level is 32767, which is internally read by
 /// RocksDB as the default magic number and translated to the library's default
 /// compression level as they all differ. See their `kDefaultCompressionLevel`.
 #[allow(clippy::doc_markdown)]
-fn default_rocksdb_bottommost_compression_level() -> i32 { 32767 }
+fn default_rocksdb_bottommost_compression_level() -> i32 {
+	32767
+}
 
-fn default_rocksdb_stats_level() -> u8 { 1 }
+fn default_rocksdb_stats_level() -> u8 {
+	1
+}
 
 // I know, it's a great name
 #[must_use]
 #[inline]
-pub fn default_default_room_version() -> RoomVersionId { RoomVersionId::V11 }
+pub fn default_default_room_version() -> RoomVersionId {
+	RoomVersionId::V11
+}
 
 fn default_ip_range_denylist() -> Vec<String> {
 	vec![
@@ -2731,17 +3051,29 @@ fn default_url_preview_max_spider_size() -> usize {
 	256_000 // 256KB
 }
 
-fn default_url_preview_timeout() -> u64 { 120 }
+fn default_url_preview_timeout() -> u64 {
+	120
+}
 
-fn default_new_user_displayname_suffix() -> String { "🏳️‍⚧️".to_owned() }
+fn default_new_user_displayname_suffix() -> String {
+	"🏳️‍⚧️".to_owned()
+}
 
-fn default_sentry_endpoint() -> Option<Url> { None }
+fn default_sentry_endpoint() -> Option<Url> {
+	None
+}
 
-fn default_sentry_traces_sample_rate() -> f32 { 0.15 }
+fn default_sentry_traces_sample_rate() -> f32 {
+	0.15
+}
 
-fn default_sentry_filter() -> String { "info".to_owned() }
+fn default_sentry_filter() -> String {
+	"info".to_owned()
+}
 
-fn default_startup_netburst_keep() -> i64 { 50 }
+fn default_startup_netburst_keep() -> i64 {
+	50
+}
 
 fn default_admin_log_capture() -> String {
 	cfg!(debug_assertions)
@@ -2750,19 +3082,27 @@ fn default_admin_log_capture() -> String {
 		.to_owned()
 }
 
-fn default_admin_room_tag() -> String { "m.server_notice".to_owned() }
+fn default_admin_room_tag() -> String {
+	"m.server_notice".to_owned()
+}
 
 #[allow(clippy::as_conversions, clippy::cast_precision_loss)]
-fn parallelism_scaled_f64(val: f64) -> f64 { val * (sys::available_parallelism() as f64) }
+fn parallelism_scaled_f64(val: f64) -> f64 {
+	val * (sys::available_parallelism() as f64)
+}
 
 fn parallelism_scaled_u32(val: u32) -> u32 {
 	let val = val.try_into().expect("failed to cast u32 to usize");
 	parallelism_scaled(val).try_into().unwrap_or(u32::MAX)
 }
 
-fn parallelism_scaled(val: usize) -> usize { val.saturating_mul(sys::available_parallelism()) }
+fn parallelism_scaled(val: usize) -> usize {
+	val.saturating_mul(sys::available_parallelism())
+}
 
-fn default_trusted_server_batch_size() -> usize { 256 }
+fn default_trusted_server_batch_size() -> usize {
+	256
+}
 
 fn default_db_pool_workers() -> usize {
 	sys::available_parallelism()
@@ -2770,38 +3110,70 @@ fn default_db_pool_workers() -> usize {
 		.clamp(32, 1024)
 }
 
-fn default_db_pool_workers_limit() -> usize { 64 }
+fn default_db_pool_workers_limit() -> usize {
+	64
+}
 
-fn default_db_pool_queue_mult() -> usize { 4 }
+fn default_db_pool_queue_mult() -> usize {
+	4
+}
 
-fn default_stream_width_default() -> usize { 32 }
+fn default_stream_width_default() -> usize {
+	32
+}
 
-fn default_stream_width_scale() -> f32 { 1.0 }
+fn default_stream_width_scale() -> f32 {
+	1.0
+}
 
-fn default_stream_amplification() -> usize { 1024 }
+fn default_stream_amplification() -> usize {
+	1024
+}
 
-fn default_client_receive_timeout() -> u64 { 75 }
+fn default_client_receive_timeout() -> u64 {
+	75
+}
 
-fn default_client_request_timeout() -> u64 { 180 }
+fn default_client_request_timeout() -> u64 {
+	180
+}
 
-fn default_client_response_timeout() -> u64 { 120 }
+fn default_client_response_timeout() -> u64 {
+	120
+}
 
-fn default_client_shutdown_timeout() -> u64 { 15 }
+fn default_client_shutdown_timeout() -> u64 {
+	15
+}
 
-fn default_sender_shutdown_timeout() -> u64 { 5 }
+fn default_sender_shutdown_timeout() -> u64 {
+	5
+}
 
 // blurhashing defaults recommended by https://blurha.sh/
 // 2^25
-pub(super) fn default_blurhash_max_raw_size() -> u64 { 33_554_432 }
+pub(super) fn default_blurhash_max_raw_size() -> u64 {
+	33_554_432
+}
 
-pub(super) fn default_blurhash_x_component() -> u32 { 4 }
+pub(super) fn default_blurhash_x_component() -> u32 {
+	4
+}
 
-pub(super) fn default_blurhash_y_component() -> u32 { 3 }
+pub(super) fn default_blurhash_y_component() -> u32 {
+	3
+}
 
 // end recommended & blurhashing defaults
 
-fn default_ldap_search_filter() -> String { "(objectClass=*)".to_owned() }
+fn default_ldap_search_filter() -> String {
+	"(objectClass=*)".to_owned()
+}
 
-fn default_ldap_uid_attribute() -> String { String::from("uid") }
+fn default_ldap_uid_attribute() -> String {
+	String::from("uid")
+}
 
-fn default_ldap_name_attribute() -> String { String::from("givenName") }
+fn default_ldap_name_attribute() -> String {
+	String::from("givenName")
+}
