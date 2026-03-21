@@ -2424,6 +2424,16 @@ pub struct IdentityProvider {
 	#[serde(default)]
 	pub callback_url: Option<Url>,
 
+	/// User registration URL at the identity provider. When set and the
+	/// client signals a registration intent (MSC3824 `action=register`),
+	/// the user is redirected here instead of to `authorization_url`.
+	/// The provider's authorize URL is appended as `?redirect_uri=` so the
+	/// user lands back in the login flow after registering.
+	///
+	/// example: "https://auth.example.com/auth/v1/users/register"
+	#[serde(default)]
+	pub registration_url: Option<Url>,
+
 	/// Whether to auto-discover endpoints via OIDC discovery.
 	///
 	/// default: true

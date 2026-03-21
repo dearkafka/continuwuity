@@ -190,14 +190,37 @@ async fn handle_sso_redirect(
 		scope: &scope,
 	};
 
-	let mut location = provider
+	let authorize_url = provider
 		.authorization_url
 		.clone()
 		.ok_or_else(|| err!(Config("authorization_url", "Missing for provider")))?;
 
 	let query_str = serde_html_form::to_string(&query)
 		.map_err(|e| err!(error!("Failed to encode query: {e}")))?;
-	location.set_query(Some(&query_str));
+
+	let mut authorize_with_query = authorize_url;
+	authorize_with_query.set_query(Some(&query_str));
+
+	// MSC3824: detect `action=register` in the client's redirect URL.
+	// When the provider has a `registration_url`, send the user there
+	// first with `redirect_uri` pointing back to the authorize endpoint
+	// so they return to the normal OIDC flow after registering.
+	let is_register = redirect_url
+		.query_pairs()
+		.any(|(k, v)| {
+			(k == "action" || k == "org.matrix.msc3824.action") && v == "register"
+		});
+
+	let location = if is_register
+		&& let Some(mut reg_url) = provider.registration_url.clone()
+	{
+		reg_url
+			.query_pairs_mut()
+			.append_pair("redirect_uri", authorize_with_query.as_str());
+		reg_url
+	} else {
+		authorize_with_query
+	};
 
 	let cookie_val = GrantCookie {
 		client_id: provider.client_id.as_str().into(),
@@ -209,7 +232,11 @@ async fn handle_sso_redirect(
 	let cookie_val_str = serde_html_form::to_string(&cookie_val)
 		.map_err(|e| err!(error!("Failed to encode cookie: {e}")))?;
 
-	let grant_duration = provider.grant_session_duration.unwrap_or(300);
+	// Registration flows go through an external signup page first, so
+	// allow extra time (15 min) for the user to complete registration
+	// before the grant session expires.
+	let default_duration = if is_register { 900 } else { 300 };
+	let grant_duration = provider.grant_session_duration.unwrap_or(default_duration);
 
 	// SameSite=Lax is correct for SSO: the callback is always a top-level
 	// navigation (GET redirect from the provider), and Lax cookies are sent
@@ -989,6 +1016,7 @@ mod tests {
 			userid_claims: vec!["preferred_username".to_owned()],
 			grant_session_duration: Some(300),
 			registration: true,
+			registration_url: None,
 			trusted,
 		}
 	}
