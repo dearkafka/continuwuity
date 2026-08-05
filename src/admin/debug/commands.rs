@@ -236,10 +236,13 @@ pub(super) async fn get_remote_pdu(
 	match self
 		.services
 		.sending
-		.send_federation_request(&server, ruma::api::federation::event::get_event::v1::Request {
-			event_id: event_id.clone(),
-			include_unredacted_content: None,
-		})
+		.send_federation_request(
+			&server,
+			ruma::api::federation::event::get_event::v1::Request {
+				event_id: event_id.clone(),
+				include_unredacted_content: None,
+			},
+		)
 		.await
 	{
 		| Err(e) => {
@@ -549,10 +552,13 @@ pub(super) async fn force_set_room_state_from_server(
 	let remote_state_response = self
 		.services
 		.sending
-		.send_federation_request(&server_name, get_room_state::v1::Request {
-			room_id: room_id.clone(),
-			event_id: at_event_id,
-		})
+		.send_federation_request(
+			&server_name,
+			get_room_state::v1::Request {
+				room_id: room_id.clone(),
+				event_id: at_event_id,
+			},
+		)
 		.await?;
 
 	for pdu in remote_state_response.pdus.clone() {

@@ -137,10 +137,13 @@ pub(crate) async fn create_join_event_template_route(
 		.rooms
 		.timeline
 		.create_hash_and_sign_event(
-			PduBuilder::state(body.user_id.to_string(), &RoomMemberEventContent {
-				join_authorized_via_users_server,
-				..RoomMemberEventContent::new(MembershipState::Join)
-			}),
+			PduBuilder::state(
+				body.user_id.to_string(),
+				&RoomMemberEventContent {
+					join_authorized_via_users_server,
+					..RoomMemberEventContent::new(MembershipState::Join)
+				},
+			),
 			&body.user_id,
 			Some(&body.room_id),
 			&state_lock,
@@ -258,7 +261,7 @@ pub(crate) async fn user_can_perform_restricted_join(
 					return Ok(true);
 				}
 			},
-			| AllowRule::UnstableSpamChecker =>
+			| AllowRule::UnstableSpamChecker => {
 				return match services
 					.antispam
 					.meowlnir_accept_make_join(room_id.to_owned(), user_id.to_owned())
@@ -266,7 +269,8 @@ pub(crate) async fn user_can_perform_restricted_join(
 				{
 					| Ok(()) => Ok(true),
 					| Err(_) => Err!(Request(Forbidden("Antispam rejected join request."))),
-				},
+				};
+			},
 			| _ => {
 				// We don't recognise this join rule, so we cannot satisfy the request.
 				could_satisfy = false;

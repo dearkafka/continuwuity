@@ -84,7 +84,9 @@ impl crate::Service for Service {
 		}
 	}
 
-	fn name(&self) -> &str { crate::service::make_name(std::module_path!()) }
+	fn name(&self) -> &str {
+		crate::service::make_name(std::module_path!())
+	}
 }
 
 impl Service {
@@ -110,8 +112,9 @@ impl Service {
 
 		let last_last_active_ago = match last_presence {
 			| Err(_) => 0_u64,
-			| Ok((_, ref presence)) =>
-				presence.content.last_active_ago.unwrap_or_default().into(),
+			| Ok((_, ref presence)) => {
+				presence.content.last_active_ago.unwrap_or_default().into()
+			},
 		};
 
 		if !state_changed && last_last_active_ago < REFRESH_TIMEOUT {
@@ -260,10 +263,12 @@ impl Service {
 		}
 
 		let new_state = match (&presence_state, last_active_ago.map(u64::from)) {
-			| (PresenceState::Online, Some(ago)) if ago >= self.idle_timeout =>
-				Some(PresenceState::Unavailable),
-			| (PresenceState::Unavailable, Some(ago)) if ago >= self.offline_timeout =>
-				Some(PresenceState::Offline),
+			| (PresenceState::Online, Some(ago)) if ago >= self.idle_timeout => {
+				Some(PresenceState::Unavailable)
+			},
+			| (PresenceState::Unavailable, Some(ago)) if ago >= self.offline_timeout => {
+				Some(PresenceState::Offline)
+			},
 			| _ => None,
 		};
 

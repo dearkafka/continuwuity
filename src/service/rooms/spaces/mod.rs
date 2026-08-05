@@ -99,9 +99,13 @@ impl crate::Service for Service {
 		Ok(())
 	}
 
-	async fn clear_cache(&self) { self.roomid_spacehierarchy_cache.lock().await.clear(); }
+	async fn clear_cache(&self) {
+		self.roomid_spacehierarchy_cache.lock().await.clear();
+	}
 
-	fn name(&self) -> &str { crate::service::make_name(std::module_path!()) }
+	fn name(&self) -> &str {
+		crate::service::make_name(std::module_path!())
+	}
 }
 
 /// Gets the summary of a space using solely local information
@@ -441,16 +445,19 @@ where
 		| SpaceRoomJoinRule::Public
 		| SpaceRoomJoinRule::Knock
 		| SpaceRoomJoinRule::KnockRestricted => true,
-		| SpaceRoomJoinRule::Restricted =>
+		| SpaceRoomJoinRule::Restricted => {
 			allowed_rooms
 				.stream()
 				.any(async |room| match identifier {
-					| Identifier::UserId(user) =>
-						self.services.state_cache.is_joined(user, room).await,
-					| Identifier::ServerName(server) =>
-						self.services.state_cache.server_in_room(server, room).await,
+					| Identifier::UserId(user) => {
+						self.services.state_cache.is_joined(user, room).await
+					},
+					| Identifier::ServerName(server) => {
+						self.services.state_cache.server_in_room(server, room).await
+					},
 				})
-				.await,
+				.await
+		},
 
 		// Invite only, Private, or Custom join rule
 		| _ => false,

@@ -143,7 +143,8 @@ pub(crate) async fn sso_login_with_provider_route(
 ) -> Result<sso_login_with_provider::v3::Response> {
 	let action = sso_action_from_uri(&uri);
 	let (location, cookie) =
-		handle_sso_redirect(&services, &body.body.idp_id, &body.body.redirect_url, action).await?;
+		handle_sso_redirect(&services, &body.body.idp_id, &body.body.redirect_url, action)
+			.await?;
 
 	Ok(sso_login_with_provider::v3::Response { location, cookie })
 }
@@ -167,17 +168,29 @@ async fn handle_sso_redirect(
 	let redirect_url: Url = Url::parse(redirect_url)
 		.map_err(|e| err!(Request(InvalidParam("Invalid redirect_url: {e}"))))?;
 
-	// Validate redirect_url origin against the well-known client URL to
-	// prevent open redirects that leak the login token.
-	if let Some(ref allowed) = services.server.config.well_known.client {
-		if redirect_url.scheme() != allowed.scheme() || redirect_url.host() != allowed.host() {
-			return Err!(Request(Forbidden(
-				"redirect_url origin does not match the configured client"
-			)));
-		}
-	}
-
 	let provider = services.oauth.get_provider(idp_id).await?;
+
+	// Validate redirect_url origin against the well-known client URL to
+	// prevent open redirects that leak the login token. Allow the callback
+	// origin as well so server-native OIDC flows can complete on the homeserver
+	// host while browser clients still return to the web client host.
+	let matches_client = services
+		.server
+		.config
+		.well_known
+		.client
+		.as_ref()
+		.is_some_and(|allowed| url_origin_matches(&redirect_url, allowed));
+	let matches_callback = provider
+		.callback_url
+		.as_ref()
+		.is_some_and(|callback_url| url_origin_matches(&redirect_url, callback_url));
+
+	if !matches_client && !matches_callback {
+		return Err!(Request(Forbidden(
+			"redirect_url origin does not match the configured client or callback"
+		)));
+	}
 
 	let sess_id = utils::random_string(conduwuit_service::oauth::SESSION_ID_LENGTH);
 	let query_nonce = utils::random_string(conduwuit_service::oauth::CODE_VERIFIER_LENGTH);
@@ -222,9 +235,7 @@ async fn handle_sso_redirect(
 	// so they return to the normal OIDC flow after registering.
 	let is_register = action.as_deref() == Some("register");
 
-	let location = if is_register
-		&& let Some(mut reg_url) = provider.registration_url.clone()
-	{
+	let location = if is_register && let Some(mut reg_url) = provider.registration_url.clone() {
 		// After registration, redirect the user back to the client (e.g.
 		// Cinny) rather than to the OIDC authorize URL.  Rauthy validates
 		// redirect_uri against registered client_uris, and the full
@@ -538,10 +549,7 @@ pub(crate) async fn sso_link_account_route(
 	};
 
 	if !services.users.exists(&user_id).await {
-		return Ok(sso_html_response(render_link_prompt(
-			&form.sess_id,
-			Some(credential_error),
-		)));
+		return Ok(sso_html_response(render_link_prompt(&form.sess_id, Some(credential_error))));
 	}
 
 	// Only allow linking to password-origin accounts (or legacy accounts with
@@ -552,10 +560,7 @@ pub(crate) async fn sso_link_account_route(
 		.await
 		.is_ok_and(|origin| origin != "password")
 	{
-		return Ok(sso_html_response(render_link_prompt(
-			&form.sess_id,
-			Some(credential_error),
-		)));
+		return Ok(sso_html_response(render_link_prompt(&form.sess_id, Some(credential_error))));
 	}
 
 	// Verify password.
@@ -566,17 +571,11 @@ pub(crate) async fn sso_link_account_route(
 		.map_err(|_| err!(Request(Forbidden("Wrong username or password."))))?;
 
 	if password_hash.is_empty() {
-		return Ok(sso_html_response(render_link_prompt(
-			&form.sess_id,
-			Some(credential_error),
-		)));
+		return Ok(sso_html_response(render_link_prompt(&form.sess_id, Some(credential_error))));
 	}
 
 	if hash::verify_password(&form.password, &password_hash).is_err() {
-		return Ok(sso_html_response(render_link_prompt(
-			&form.sess_id,
-			Some(credential_error),
-		)));
+		return Ok(sso_html_response(render_link_prompt(&form.sess_id, Some(credential_error))));
 	}
 
 	// Password verified — store the email mapping and complete SSO login.
@@ -672,12 +671,7 @@ async fn complete_sso_login(
 		return Err!(Request(UserDeactivated("This user has been deactivated.")));
 	}
 
-	if services
-		.users
-		.is_suspended(user_id)
-		.await
-		.unwrap_or(false)
-	{
+	if services.users.is_suspended(user_id).await.unwrap_or(false) {
 		return Err!(Request(Forbidden("This user has been suspended.")));
 	}
 
@@ -1009,9 +1003,11 @@ fn trusted_verified_email<'a>(
 
 #[cfg(test)]
 mod tests {
+	use url::Url;
+
 	use conduwuit::config::IdentityProvider;
 
-	use super::trusted_verified_email;
+	use super::{trusted_verified_email, url_origin_matches};
 
 	fn provider(trusted: bool) -> IdentityProvider {
 		IdentityProvider {
@@ -1019,6 +1015,9 @@ mod tests {
 			client_id: "client".to_owned(),
 			client_secret: None,
 			client_secret_file: None,
+			admin_api_url: None,
+			admin_api_key: None,
+			admin_api_key_file: None,
 			issuer_url: None,
 			authorization_url: None,
 			token_url: None,
@@ -1037,6 +1036,7 @@ mod tests {
 			registration: true,
 			registration_url: None,
 			trusted,
+			invite_user_group_ids: Vec::new(),
 		}
 	}
 
@@ -1072,6 +1072,16 @@ mod tests {
 
 		assert_eq!(trusted_verified_email(&provider(true), &userinfo), Some("alice@example.com"));
 	}
+
+	#[test]
+	fn url_origin_matches_requires_same_origin() {
+		let left = Url::parse("https://mx.example.com/path").unwrap();
+		let same = Url::parse("https://mx.example.com/other").unwrap();
+		let different_host = Url::parse("https://chat.example.com/path").unwrap();
+
+		assert!(url_origin_matches(&left, &same));
+		assert!(!url_origin_matches(&left, &different_host));
+	}
 }
 
 /// Download an avatar image from a URL and upload it to the homeserver's
@@ -1082,8 +1092,8 @@ async fn set_avatar(services: &Services, user_id: &UserId, avatar_url: &str) -> 
 
 	// Validate avatar URL to prevent SSRF — only allow https (or http for
 	// providers that don't support TLS in dev).
-	let parsed = Url::parse(avatar_url)
-		.map_err(|_| err!(Request(InvalidParam("Invalid avatar URL"))))?;
+	let parsed =
+		Url::parse(avatar_url).map_err(|_| err!(Request(InvalidParam("Invalid avatar URL"))))?;
 
 	if !matches!(parsed.scheme(), "https" | "http") {
 		return Err!(Request(InvalidParam("Avatar URL must be http(s)")));
@@ -1409,6 +1419,12 @@ fn validate_grant_cookie(
 	}
 
 	Ok(())
+}
+
+fn url_origin_matches(left: &Url, right: &Url) -> bool {
+	left.scheme() == right.scheme()
+		&& left.host_str() == right.host_str()
+		&& left.port_or_known_default() == right.port_or_known_default()
 }
 
 fn clear_grant_cookie() -> header::HeaderValue {

@@ -155,12 +155,13 @@ where
 	let mut soft_fail = match (auth_check, incoming_pdu.redacts_id(&room_version_id)) {
 		| (false, _) => true,
 		| (true, None) => false,
-		| (true, Some(redact_id)) =>
+		| (true, Some(redact_id)) => {
 			!self
 				.services
 				.state_accessor
 				.user_can_redact(&redact_id, incoming_pdu.sender(), room_id, true)
-				.await?,
+				.await?
+		},
 	};
 
 	// 13. Use state resolution to find new room state

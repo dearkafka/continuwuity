@@ -520,12 +520,13 @@ where
 	// or equal to the invite level
 	if *incoming_event.event_type() == TimelineEventType::RoomThirdPartyInvite {
 		let invite_level = match &power_levels_event {
-			| Some(power_levels) =>
+			| Some(power_levels) => {
 				deserialize_power_levels_content_invite(
 					power_levels.content().get(),
 					room_version,
 				)?
-				.invite,
+				.invite
+			},
 			| None => int!(0),
 		};
 
@@ -572,11 +573,12 @@ where
 			sender_power_level,
 			&creators,
 		) {
-			| Some(required_pwr_lvl) =>
+			| Some(required_pwr_lvl) => {
 				if !required_pwr_lvl {
 					warn!("m.room.power_levels was not allowed");
 					return Ok(false);
-				},
+				}
+			},
 			| _ => {
 				warn!("m.room.power_levels was not allowed");
 				return Ok(false);
@@ -597,8 +599,9 @@ where
 		&& *incoming_event.event_type() == TimelineEventType::RoomRedaction
 	{
 		let redact_level = match power_levels_event {
-			| Some(pl) =>
-				deserialize_power_levels_content_redact(pl.content().get(), room_version)?.redact,
+			| Some(pl) => {
+				deserialize_power_levels_content_redact(pl.content().get(), room_version)?.redact
+			},
 			| None => int!(50),
 		};
 
@@ -852,7 +855,7 @@ where
 				false
 			} else {
 				match join_rules {
-					| JoinRule::Invite =>
+					| JoinRule::Invite => {
 						if !membership_allows_join {
 							warn!(
 								%sender,
@@ -864,12 +867,13 @@ where
 						} else {
 							trace!(sender=%sender, "sender is invited to room, allowing join");
 							true
-						},
+						}
+					},
 					| JoinRule::Knock if !room_version.allow_knocking => {
 						warn!("Join rule is knock but room version does not allow knocking");
 						false
 					},
-					| JoinRule::Knock =>
+					| JoinRule::Knock => {
 						if !membership_allows_join {
 							warn!(
 								%sender,
@@ -881,7 +885,8 @@ where
 						} else {
 							trace!(sender=%sender, "sender is invited or already joined to room, allowing join");
 							true
-						},
+						}
+					},
 					| JoinRule::KnockRestricted(_) if !room_version.knock_restricted_join_rule =>
 					{
 						warn!(
@@ -951,7 +956,7 @@ where
 			// If content has third_party_invite key
 			trace!("starting target_membership=invite check");
 			match third_party_invite.and_then(|i| i.deserialize().ok()) {
-				| Some(tp_id) =>
+				| Some(tp_id) => {
 					if target_user_current_membership == MembershipState::Ban {
 						warn!(?target_user_membership_event_id, "Can't invite banned user");
 						false
@@ -966,8 +971,9 @@ where
 							warn!("Third party invite invalid");
 						}
 						allow
-					},
-				| _ =>
+					}
+				},
+				| _ => {
 					if !sender_is_joined {
 						warn!(
 							%sender,
@@ -1010,7 +1016,8 @@ where
 							"allowing invite"
 						);
 						allow
-					},
+					}
+				},
 			}
 		},
 		| MembershipState::Leave => {
@@ -1104,7 +1111,7 @@ where
 				true
 			}
 		},
-		| MembershipState::Ban =>
+		| MembershipState::Ban => {
 			if !sender_is_joined {
 				warn!(
 					%sender,
@@ -1126,7 +1133,8 @@ where
 					);
 				}
 				allow
-			},
+			}
+		},
 		| MembershipState::Knock if room_version.allow_knocking => {
 			// 1. If the `join_rule` is anything other than `knock` or `knock_restricted`,
 			//    reject.

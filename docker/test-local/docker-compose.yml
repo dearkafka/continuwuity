@@ -14,6 +14,7 @@ services:
     depends_on:
       - continuwuity
       - cinny
+      - pocket-id
 
   # === Matrix homeserver with SSO ===
   continuwuity:
@@ -22,6 +23,8 @@ services:
     volumes:
       - ./continuwuity.toml:/etc/continuwuity.toml:ro
       - continuwuity-data:/var/lib/continuwuity
+      - ./shared/pocket-id-client-secret:/run/secrets/pocket-id-client-secret:ro
+      - ./shared/pocket-id-static-api-key:/run/secrets/pocket-id-static-api-key:ro
     environment:
       CONTINUWUITY_CONFIG: "/etc/continuwuity.toml"
     networks:
@@ -36,31 +39,53 @@ services:
     networks:
       - stack
 
-  # === Rauthy: OIDC identity provider ===
-  rauthy:
-    image: ghcr.io/sebadob/rauthy:0.34.3
-    container_name: rauthy-test
+  # === Pocket ID: OIDC identity provider ===
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:v2
+    container_name: pocket-id-test
     environment:
-      - LOCAL_TEST=true
-      - PUB_URL=localhost:8443
-      - SMTP_URL=mail.isfluid.com
-      - SMTP_PORT=465
-      - SMTP_USERNAME=meow@fluiid.party
-      - SMTP_PASSWORD=w1#$$336%*6x$$H%FUXfFG
-      - SMTP_FROM=meow@fluiid.party
-      - OPEN_USER_REG=true
-      - BOOTSTRAP_ADMIN_EMAIL=me@isfluid.com
-      - BOOTSTRAP_ADMIN_PASSWORD_PLAIN=Admin123!
+      APP_URL: "https://localhost:8443"
+      INTERNAL_APP_URL: "http://pocket-id:1411"
+      ENCRYPTION_KEY_FILE: "/run/secrets/pocket-id-encryption-key"
+      STATIC_API_KEY_FILE: "/run/secrets/pocket-id-static-api-key"
+      SMTP_HOST: "mail.isfluid.com"
+      SMTP_PORT: "465"
+      SMTP_FROM: "meow@fluiid.party"
+      SMTP_USER: "meow@fluiid.party"
+      SMTP_PASSWORD_FILE: "/run/secrets/pocket-id-smtp-password"
+      SMTP_TLS: "tls"
+      TRUST_PROXY: "true"
+      UI_CONFIG_DISABLED: "true"
+      APP_NAME: "fluiid.party"
+      ALLOW_USER_SIGNUPS: "withToken"
+      EMAILS_VERIFIED: "true"
+      REQUIRE_USER_EMAIL: "true"
+      EMAIL_LOGIN_NOTIFICATION_ENABLED: "true"
+      EMAIL_VERIFICATION_ENABLED: "true"
+      EMAIL_ONE_TIME_ACCESS_AS_ADMIN_ENABLED: "true"
+      EMAIL_ONE_TIME_ACCESS_AS_UNAUTHENTICATED_ENABLED: "true"
+      EMAIL_API_KEY_EXPIRATION_ENABLED: "true"
+      VERSION_CHECK_DISABLED: "true"
+      ANALYTICS_DISABLED: "true"
     volumes:
-      - rauthy-data:/app/data
+      - pocket-id-data:/app/data
+      - ./shared/pocket-id-encryption-key:/run/secrets/pocket-id-encryption-key:ro
+      - ./shared/pocket-id-static-api-key:/run/secrets/pocket-id-static-api-key:ro
+      - ./shared/pocket-id-smtp-password:/run/secrets/pocket-id-smtp-password:ro
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 1m30s
+      timeout: 5s
+      retries: 2
+      start_period: 10s
     networks:
       stack:
         aliases:
-          - rauthy.internal
+          - pocket-id.internal
 
 volumes:
   continuwuity-data:
-  rauthy-data:
+  pocket-id-data:
 
 networks:
   stack:

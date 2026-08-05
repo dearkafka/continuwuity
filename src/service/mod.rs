@@ -31,6 +31,7 @@ pub mod resolver;
 pub mod rooms;
 pub mod sending;
 pub mod server_keys;
+pub mod sso_invites;
 pub mod sync;
 pub mod transactions;
 pub mod uiaa;

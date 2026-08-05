@@ -75,22 +75,34 @@ impl Engine {
 			sequence = ?self.current_sequence(),
 		),
 	)]
-	pub fn update(&self) -> Result { self.db.try_catch_up_with_primary().map_err(map_err) }
+	pub fn update(&self) -> Result {
+		self.db.try_catch_up_with_primary().map_err(map_err)
+	}
 
 	#[tracing::instrument(level = "info", skip_all)]
-	pub fn sync(&self) -> Result { result(DBCommon::flush_wal(&self.db, true)) }
+	pub fn sync(&self) -> Result {
+		result(DBCommon::flush_wal(&self.db, true))
+	}
 
 	#[tracing::instrument(level = "debug", skip_all)]
-	pub fn flush(&self) -> Result { result(DBCommon::flush_wal(&self.db, false)) }
+	pub fn flush(&self) -> Result {
+		result(DBCommon::flush_wal(&self.db, false))
+	}
 
 	#[inline]
-	pub(crate) fn cork(&self) { self.corks.fetch_add(1, Ordering::Relaxed); }
+	pub(crate) fn cork(&self) {
+		self.corks.fetch_add(1, Ordering::Relaxed);
+	}
 
 	#[inline]
-	pub(crate) fn uncork(&self) { self.corks.fetch_sub(1, Ordering::Relaxed); }
+	pub(crate) fn uncork(&self) {
+		self.corks.fetch_sub(1, Ordering::Relaxed);
+	}
 
 	#[inline]
-	pub fn corked(&self) -> bool { self.corks.load(Ordering::Relaxed) > 0 }
+	pub fn corked(&self) -> bool {
+		self.corks.load(Ordering::Relaxed) > 0
+	}
 
 	/// Query for database property by null-terminated name which is expected to
 	/// have a result with an integer representation. This is intended for

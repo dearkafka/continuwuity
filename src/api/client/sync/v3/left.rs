@@ -155,11 +155,10 @@ pub(super) async fn load_left_room(
 			}
 
 			trace!("syncing dummy leave event");
-			(TimelinePdus::default(), vec![create_dummy_leave_event(
-				services,
-				sync_context,
-				room_id,
-			)])
+			(
+				TimelinePdus::default(),
+				vec![create_dummy_leave_event(services, sync_context, room_id)],
+			)
 		},
 	};
 

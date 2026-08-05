@@ -42,7 +42,10 @@ impl Providers {
 		let provider = configure(id, config, http_client, &self.server).await?;
 
 		debug!(?id, ?provider, "Provider configured");
-		self.cache.write().await.insert(id.to_owned(), provider.clone());
+		self.cache
+			.write()
+			.await
+			.insert(id.to_owned(), provider.clone());
 
 		Ok(provider)
 	}
@@ -91,8 +94,7 @@ async fn configure(
 			| _ => return Err!(Config("issuer_url", "Required for this provider.")),
 		};
 		provider.issuer_url = Some(
-			Url::parse(url_str)
-				.map_err(|e| err!(error!("Invalid default issuer URL: {e}")))?,
+			Url::parse(url_str).map_err(|e| err!(error!("Invalid default issuer URL: {e}")))?,
 		);
 	}
 
@@ -125,7 +127,11 @@ async fn configure(
 	}
 
 	if provider.token_url.is_none() {
-		let path = if provider.brand == "github" { "access_token" } else { "token" };
+		let path = if provider.brand == "github" {
+			"access_token"
+		} else {
+			"token"
+		};
 		provider.token_url = response
 			.get("token_endpoint")
 			.and_then(JsonValue::as_str)
@@ -160,9 +166,8 @@ async fn configure(
 
 	if provider.callback_url.is_none() {
 		if let Some(server_url) = server.config.well_known.client.as_ref() {
-			let callback_path = format!(
-				"_matrix/client/unstable/login/sso/callback/{config_key}"
-			);
+			let callback_path =
+				format!("_matrix/client/unstable/login/sso/callback/{config_key}");
 			provider.callback_url = Some(
 				server_url
 					.join(&callback_path)
@@ -203,10 +208,7 @@ fn discovery_url(provider: &Provider) -> Result<Url> {
 		.filter(|_| provider.discovery)
 		.or(default_url)
 		.ok_or_else(|| {
-			err!(Config(
-				"discovery_url",
-				"Failed to determine discovery URL for provider"
-			))
+			err!(Config("discovery_url", "Failed to determine discovery URL for provider"))
 		})
 }
 

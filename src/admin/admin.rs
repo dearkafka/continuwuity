@@ -11,6 +11,7 @@ use crate::{
 	query::{self, QueryCommand},
 	room::{self, RoomCommand},
 	server::{self, ServerCommand},
+	sso_invite::{self, SsoInviteCommand},
 	token::{self, TokenCommand},
 	user::{self, UserCommand},
 };
@@ -29,6 +30,10 @@ pub enum AdminCommand {
 	#[command(subcommand)]
 	/// Commands for managing registration tokens
 	Token(TokenCommand),
+
+	#[command(subcommand)]
+	/// Commands for managing SSO invite links
+	SsoInvite(SsoInviteCommand),
 
 	#[command(subcommand)]
 	/// Commands for managing rooms
@@ -79,6 +84,10 @@ pub(super) async fn process(command: AdminCommand, context: &Context<'_>) -> Res
 			// token commands are all restricted
 			context.bail_restricted()?;
 			token::process(command, context).await
+		},
+		| SsoInvite(command) => {
+			context.bail_restricted()?;
+			sso_invite::process(command, context).await
 		},
 		| Rooms(command) => room::process(command, context).await,
 		| Federation(command) => federation::process(command, context).await,

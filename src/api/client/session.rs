@@ -55,7 +55,9 @@ pub(crate) async fn get_login_types_route(
 		login_types.push(get_login_types::v3::LoginType::Password(PasswordLoginType::default()));
 	}
 
-	login_types.push(get_login_types::v3::LoginType::ApplicationService(ApplicationServiceLoginType::default()));
+	login_types.push(get_login_types::v3::LoginType::ApplicationService(
+		ApplicationServiceLoginType::default(),
+	));
 	login_types.push(get_login_types::v3::LoginType::Token(TokenLoginType {
 		get_login_token: services.server.config.login_via_existing_session,
 	}));

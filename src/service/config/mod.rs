@@ -44,24 +44,32 @@ impl crate::Service for Service {
 		Ok(())
 	}
 
-	fn name(&self) -> &str { crate::service::make_name(std::module_path!()) }
+	fn name(&self) -> &str {
+		crate::service::make_name(std::module_path!())
+	}
 }
 
 impl Deref for Service {
 	type Target = Arc<Config>;
 
 	#[inline]
-	fn deref(&self) -> &Self::Target { &self.server.config }
+	fn deref(&self) -> &Self::Target {
+		&self.server.config
+	}
 }
 
 #[implement(Service)]
 fn handle_reload(&self) -> Result {
 	if self.server.config.config_reload_signal {
 		#[cfg(all(feature = "systemd", target_os = "linux"))]
-		sd_notify::notify(false, &[
-			sd_notify::NotifyState::Reloading,
-			sd_notify::NotifyState::monotonic_usec_now().expect("Failed to read monotonic time"),
-		])
+		sd_notify::notify(
+			false,
+			&[
+				sd_notify::NotifyState::Reloading,
+				sd_notify::NotifyState::monotonic_usec_now()
+					.expect("Failed to read monotonic time"),
+			],
+		)
 		.expect("failed to notify systemd of reloading state");
 
 		let config_paths = self.server.config.config_paths.clone().unwrap_or_default();

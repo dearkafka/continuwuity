@@ -326,7 +326,7 @@ where
 				},
 			}
 		},
-		| TimelineEventType::SpaceChild =>
+		| TimelineEventType::SpaceChild => {
 			if let Some(_state_key) = pdu.state_key() {
 				self.services
 					.spaces
@@ -334,7 +334,8 @@ where
 					.lock()
 					.await
 					.remove(room_id);
-			},
+			}
+		},
 		| TimelineEventType::RoomMember => {
 			if let Some(state_key) = pdu.state_key() {
 				// if the state_key fails

@@ -27,19 +27,24 @@ struct AuthIssuerResponse {
 
 pub(crate) async fn auth_issuer_route(
 	State(services): State<crate::State>,
+	headers: http::HeaderMap,
 ) -> Result<impl IntoResponse> {
-	let issuer = oidc_issuer_url(&services)?;
+	let issuer = oidc_issuer_url(&services, &headers)?;
 	Ok(Json(AuthIssuerResponse { issuer }))
 }
 
 pub(crate) async fn openid_configuration_route(
 	State(services): State<crate::State>,
+	headers: http::HeaderMap,
 ) -> Result<impl IntoResponse> {
-	Ok(Json(oidc_metadata(&services)?))
+	Ok(Json(oidc_metadata(&services, &headers)?))
 }
 
-fn oidc_metadata(services: &conduwuit_service::Services) -> Result<ProviderMetadata> {
-	let issuer = oidc_issuer_url(services)?;
+fn oidc_metadata(
+	services: &conduwuit_service::Services,
+	headers: &http::HeaderMap,
+) -> Result<ProviderMetadata> {
+	let issuer = oidc_issuer_url(services, headers)?;
 	let base = issuer.trim_end_matches('/').to_owned();
 
 	Ok(ProviderMetadata {
@@ -134,6 +139,7 @@ pub(crate) struct AuthorizeParams {
 
 pub(crate) async fn authorize_route(
 	State(services): State<crate::State>,
+	headers: http::HeaderMap,
 	request: axum::extract::Request,
 ) -> Result<impl IntoResponse> {
 	let params: AuthorizeParams =
@@ -149,8 +155,8 @@ pub(crate) async fn authorize_route(
 	oidc.validate_redirect_uri(&params.client_id, &params.redirect_uri)
 		.await?;
 
-	if !params.scope.split_whitespace().any(|t| t == "openid") {
-		return Err!(Request(InvalidParam("openid scope is required")));
+	if !has_supported_authorization_scope(&params.scope) {
+		return Err!(Request(InvalidParam("openid or a Matrix scope is required")));
 	}
 
 	let req_id = utils::random_string(OIDC_REQ_ID_LENGTH);
@@ -183,7 +189,7 @@ pub(crate) async fn authorize_route(
 		.ok_or_else(|| err!(Config("identity_provider", "No identity provider configured")))?;
 
 	let idp_id = default_idp.0;
-	let base = oidc_issuer_url(&services)?;
+	let base = oidc_issuer_url(&services, &headers)?;
 	let base = base.trim_end_matches('/');
 
 	let mut complete_url = Url::parse(&format!("{base}/_continuwuity/oidc/_complete"))
@@ -247,17 +253,20 @@ pub(crate) struct TokenRequest {
 
 pub(crate) async fn token_route(
 	State(services): State<crate::State>,
+	headers: http::HeaderMap,
 	Form(body): Form<TokenRequest>,
 ) -> impl IntoResponse {
 	match body.grant_type.as_str() {
-		| "authorization_code" => token_authorization_code(&services, &body)
+		| "authorization_code" => token_authorization_code(&services, &headers, &body)
 			.await
 			.unwrap_or_else(|e| {
 				oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &e.to_string())
 			}),
-		| "refresh_token" => token_refresh(&services, &body).await.unwrap_or_else(|e| {
-			oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &e.to_string())
-		}),
+		| "refresh_token" => token_refresh(&services, &headers, &body)
+			.await
+			.unwrap_or_else(|e| {
+				oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", &e.to_string())
+			}),
 		| _ => oauth_error(
 			StatusCode::BAD_REQUEST,
 			"unsupported_grant_type",
@@ -268,6 +277,7 @@ pub(crate) async fn token_route(
 
 async fn token_authorization_code(
 	services: &conduwuit_service::Services,
+	headers: &http::HeaderMap,
 	body: &TokenRequest,
 ) -> Result<axum::response::Response> {
 	let code = body
@@ -303,6 +313,7 @@ async fn token_authorization_code(
 
 	let response = build_token_response(
 		services,
+		headers,
 		oidc,
 		client_id,
 		&session.scope,
@@ -318,6 +329,7 @@ async fn token_authorization_code(
 
 async fn token_refresh(
 	services: &conduwuit_service::Services,
+	headers: &http::HeaderMap,
 	body: &TokenRequest,
 ) -> Result<axum::response::Response> {
 	let refresh_token = body
@@ -342,6 +354,7 @@ async fn token_refresh(
 
 	let response = build_token_response(
 		services,
+		headers,
 		oidc,
 		client_id,
 		&session.scope,
@@ -432,18 +445,107 @@ fn get_oidc_server(services: &conduwuit_service::Services) -> Result<&OidcServer
 		.ok_or_else(|| err!(Request(NotFound("OIDC server not configured"))))
 }
 
-fn oidc_issuer_url(services: &conduwuit_service::Services) -> Result<String> {
-	services
+fn oidc_issuer_url(
+	services: &conduwuit_service::Services,
+	headers: &http::HeaderMap,
+) -> Result<String> {
+	request_base_url(services, headers)
+		.or_else(|| {
+			services
+				.server
+				.config
+				.well_known
+				.client
+				.as_ref()
+				.map(|url| {
+					let s = url.to_string();
+					if s.ends_with('/') { s } else { s + "/" }
+				})
+		})
+		.ok_or_else(|| err!(Config("well_known.client", "Must be set for OIDC server")))
+}
+
+fn request_base_url(
+	services: &conduwuit_service::Services,
+	headers: &http::HeaderMap,
+) -> Option<String> {
+	let fallback_scheme = services
 		.server
 		.config
 		.well_known
 		.client
 		.as_ref()
-		.map(|url| {
-			let s = url.to_string();
-			if s.ends_with('/') { s } else { s + "/" }
-		})
-		.ok_or_else(|| err!(Config("well_known.client", "Must be set for OIDC server")))
+		.map(|url| url.scheme())
+		.unwrap_or("https");
+
+	request_base_url_from_headers(headers, fallback_scheme)
+}
+
+fn request_base_url_from_headers(
+	headers: &http::HeaderMap,
+	fallback_scheme: &str,
+) -> Option<String> {
+	let host = headers
+		.get("x-forwarded-host")
+		.or_else(|| headers.get(http::header::HOST))
+		.and_then(|v| v.to_str().ok())
+		.map(str::trim)
+		.filter(|v| !v.is_empty())?;
+
+	let scheme = headers
+		.get("x-forwarded-proto")
+		.and_then(|v| v.to_str().ok())
+		.map(str::trim)
+		.filter(|v| !v.is_empty())
+		.unwrap_or(fallback_scheme);
+
+	Some(format!("{scheme}://{host}/"))
+}
+
+fn has_supported_authorization_scope(scope: &str) -> bool {
+	scope
+		.split_whitespace()
+		.any(|scope| scope == "openid" || scope.starts_with("urn:matrix:"))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{has_supported_authorization_scope, request_base_url_from_headers};
+
+	#[test]
+	fn request_base_url_prefers_forwarded_headers() {
+		let mut headers = http::HeaderMap::new();
+		headers.insert("x-forwarded-host", "mx.example.com".parse().unwrap());
+		headers.insert("x-forwarded-proto", "https".parse().unwrap());
+
+		assert_eq!(
+			request_base_url_from_headers(&headers, "https").as_deref(),
+			Some("https://mx.example.com/")
+		);
+	}
+
+	#[test]
+	fn request_base_url_falls_back_to_host_and_configured_scheme() {
+		let mut headers = http::HeaderMap::new();
+		headers.insert(http::header::HOST, "mx.example.com".parse().unwrap());
+
+		assert_eq!(
+			request_base_url_from_headers(&headers, "https").as_deref(),
+			Some("https://mx.example.com/")
+		);
+	}
+
+	#[test]
+	fn supported_authorization_scope_accepts_matrix_scopes_without_openid() {
+		assert!(has_supported_authorization_scope(
+			"urn:matrix:org.matrix.msc2967.client:api:* urn:matrix:org.matrix.msc2967.client:device:ABC123"
+		));
+	}
+
+	#[test]
+	fn supported_authorization_scope_rejects_non_matrix_non_openid_scopes() {
+		assert!(!has_supported_authorization_scope("profile email"));
+	}
 }
 
 fn extract_device_id(scope: &str) -> Option<String> {
@@ -455,6 +557,7 @@ fn extract_device_id(scope: &str) -> Option<String> {
 
 async fn build_token_response(
 	services: &conduwuit_service::Services,
+	headers: &http::HeaderMap,
 	oidc: &OidcServer,
 	client_id: &str,
 	scope: &str,
@@ -479,7 +582,7 @@ async fn build_token_response(
 			.duration_since(SystemTime::UNIX_EPOCH)
 			.unwrap_or_default()
 			.as_secs();
-		let issuer = oidc_issuer_url(services)?;
+		let issuer = oidc_issuer_url(services, headers)?;
 		let claims = IdTokenClaims {
 			iss: issuer,
 			sub: user_id.to_string(),

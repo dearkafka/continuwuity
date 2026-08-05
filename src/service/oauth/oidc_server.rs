@@ -19,6 +19,7 @@ const AUTH_CODE_LENGTH: usize = 64;
 const OIDC_CLIENT_ID_LENGTH: usize = 32;
 const AUTH_CODE_LIFETIME: Duration = Duration::from_secs(600);
 const AUTH_REQUEST_LIFETIME: Duration = Duration::from_secs(600);
+const DEVICE_CODE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const REFRESH_TOKEN_LENGTH: usize = 64;
 const REFRESH_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60 * 24 * 30);
 const REFRESH_TOKEN_PREFIX: &str = "refresh_";
@@ -513,12 +514,13 @@ fn normalize_registration_metadata(
 	if !grant_types
 		.iter()
 		.any(|grant_type| grant_type == "authorization_code")
-		|| grant_types
-			.iter()
-			.any(|grant_type| grant_type != "authorization_code" && grant_type != "refresh_token")
-	{
+		|| grant_types.iter().any(|grant_type| {
+			grant_type != "authorization_code"
+				&& grant_type != "refresh_token"
+				&& grant_type != DEVICE_CODE_GRANT_TYPE
+		}) {
 		return Err!(Request(InvalidParam(
-			"Only authorization_code and refresh_token grant types are supported"
+			"Only authorization_code, refresh_token, and device_code grant types are supported"
 		)));
 	}
 
@@ -535,7 +537,10 @@ fn normalize_registration_metadata(
 
 #[cfg(test)]
 mod tests {
-	use super::{DcrRequest, generate_refresh_token, normalize_registration_metadata};
+	use super::{
+		DEVICE_CODE_GRANT_TYPE, DcrRequest, generate_refresh_token,
+		normalize_registration_metadata,
+	};
 
 	fn request() -> DcrRequest {
 		DcrRequest {
@@ -579,6 +584,25 @@ mod tests {
 		request.grant_types = Some(vec!["authorization_code".to_owned(), "password".to_owned()]);
 
 		assert!(normalize_registration_metadata(&request).is_err());
+	}
+
+	#[test]
+	fn registration_accepts_device_code_grant_type() {
+		let mut request = request();
+		request.grant_types = Some(vec![
+			"authorization_code".to_owned(),
+			"refresh_token".to_owned(),
+			DEVICE_CODE_GRANT_TYPE.to_owned(),
+		]);
+
+		let (_auth_method, grant_types, _response_types) =
+			normalize_registration_metadata(&request).expect("device_code should be accepted");
+
+		assert!(
+			grant_types
+				.iter()
+				.any(|grant_type| grant_type == DEVICE_CODE_GRANT_TYPE)
+		);
 	}
 
 	#[test]

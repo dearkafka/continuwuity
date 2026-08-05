@@ -64,7 +64,9 @@ impl crate::Service for Service {
 		}))
 	}
 
-	fn name(&self) -> &str { crate::service::make_name(std::module_path!()) }
+	fn name(&self) -> &str {
+		crate::service::make_name(std::module_path!())
+	}
 
 	async fn worker(self: Arc<Self>) -> Result {
 		// first run mode will be enabled if there are no local users
@@ -295,7 +297,9 @@ impl Service {
 				 to open the console."
 			);
 		}
-		eprintln!("If you need assistance setting up your homeserver, make a Matrix account on another homeserver and join our chatroom: https://matrix.to/#/#continuwuity:continuwuity.org");
+		eprintln!(
+			"If you need assistance setting up your homeserver, make a Matrix account on another homeserver and join our chatroom: https://matrix.to/#/#continuwuity:continuwuity.org"
+		);
 
 		eprintln!("{}", "============".bold());
 	}

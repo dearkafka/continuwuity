@@ -26,5 +26,8 @@
     "@rspress/plugin-client-redirects": "^2.0.0",
     "@rspress/plugin-sitemap": "^2.0.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "playwright": "^1.58.2"
   }
 }

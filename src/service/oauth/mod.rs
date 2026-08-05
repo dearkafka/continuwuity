@@ -5,17 +5,17 @@ pub mod user_info;
 
 use std::sync::Arc;
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as b64encode};
 use conduwuit::{Err, Result, err, info, warn};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as b64encode};
 use url::Url;
 
 pub use self::{
 	providers::{Provider, ProviderId, Providers},
-	sessions::{Session, Sessions, CODE_VERIFIER_LENGTH, SESSION_ID_LENGTH},
+	sessions::{CODE_VERIFIER_LENGTH, SESSION_ID_LENGTH, Session, Sessions},
 	user_info::UserInfo,
 };
 use crate::Dep;
@@ -67,7 +67,9 @@ impl crate::Service for Service {
 		}))
 	}
 
-	fn name(&self) -> &str { crate::service::make_name(std::module_path!()) }
+	fn name(&self) -> &str {
+		crate::service::make_name(std::module_path!())
+	}
 }
 
 impl Service {
@@ -141,8 +143,8 @@ impl Service {
 		if let Some(issuer) = &provider.issuer_url {
 			if let Some(host) = issuer.host_str() {
 				let host_val = match issuer.port() {
-					Some(port) => format!("{host}:{port}"),
-					None => host.to_owned(),
+					| Some(port) => format!("{host}:{port}"),
+					| None => host.to_owned(),
 				};
 				request = request.header("Host", host_val);
 			}
@@ -152,12 +154,7 @@ impl Service {
 			request = request.bearer_auth(access_token);
 		}
 
-		let response: JsonValue = request
-			.send()
-			.await?
-			.error_for_status()?
-			.json()
-			.await?;
+		let response: JsonValue = request.send().await?.error_for_status()?.json().await?;
 
 		serde_json::from_value(response).map_err(Into::into)
 	}
@@ -182,8 +179,8 @@ impl Service {
 		if let Some(issuer) = &provider.issuer_url {
 			if let Some(host) = issuer.host_str() {
 				let host_val = match issuer.port() {
-					Some(port) => format!("{host}:{port}"),
-					None => host.to_owned(),
+					| Some(port) => format!("{host}:{port}"),
+					| None => host.to_owned(),
 				};
 				request = request.header("Host", host_val);
 			}
@@ -203,12 +200,7 @@ impl Service {
 			request = request.bearer_auth(access_token);
 		}
 
-		let response: JsonValue = request
-			.send()
-			.await?
-			.error_for_status()?
-			.json()
-			.await?;
+		let response: JsonValue = request.send().await?.error_for_status()?.json().await?;
 
 		if let Some(obj) = response.as_object()
 			&& let Some(error) = obj.get("error").and_then(JsonValue::as_str)

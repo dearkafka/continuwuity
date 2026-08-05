@@ -2383,6 +2383,27 @@ pub struct IdentityProvider {
 	#[serde(default)]
 	pub client_secret_file: Option<PathBuf>,
 
+	/// Base URL for an identity-provider admin API that can mint signup
+	/// invites for this provider.
+	///
+	/// This is intended for Pocket ID-style admin APIs, allowing
+	/// `!admin sso-invite issue` to create invite links without shell access.
+	///
+	/// example: "http://pocket-id:1411"
+	#[serde(default)]
+	pub admin_api_url: Option<Url>,
+
+	/// Admin API key used when issuing SSO invite links. Prefer
+	/// `admin_api_key_file` for production.
+	#[serde(default)]
+	pub admin_api_key: Option<String>,
+
+	/// Path to a file containing the admin API key.
+	///
+	/// example: "/run/secrets/pocket-id-static-api-key"
+	#[serde(default)]
+	pub admin_api_key_file: Option<PathBuf>,
+
 	/// OIDC issuer URL. When set, endpoints are auto-discovered via
 	/// `{issuer_url}/.well-known/openid-configuration`.
 	///
@@ -2507,6 +2528,14 @@ pub struct IdentityProvider {
 	/// default: false
 	#[serde(default)]
 	pub trusted: bool,
+
+	/// User-group IDs to attach to newly issued SSO invite links.
+	///
+	/// For Pocket ID this maps to the signup-token `userGroupIds` field,
+	/// allowing the homeserver to gate Matrix access to a dedicated group
+	/// such as `matrix-users`.
+	#[serde(default)]
+	pub invite_user_group_ids: Vec<String>,
 }
 
 impl IdentityProvider {

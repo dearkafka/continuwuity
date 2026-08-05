@@ -77,7 +77,9 @@ impl DeviceListUpdates {
 		self.left.extend(other.left);
 	}
 
-	fn is_empty(&self) -> bool { self.changed.is_empty() && self.left.is_empty() }
+	fn is_empty(&self) -> bool {
+		self.changed.is_empty() && self.left.is_empty()
+	}
 }
 
 impl From<DeviceListUpdates> for DeviceLists {
@@ -273,7 +275,9 @@ pub(crate) async fn build_sync_events(
 			let joined_room = load_joined_room(services, context, room_id.clone()).await;
 
 			match joined_room {
-				| Ok((room, updates, newly_joined)) => Some((room_id, room, updates, newly_joined)),
+				| Ok((room, updates, newly_joined)) => {
+					Some((room_id, room, updates, newly_joined))
+				},
 				| Err(err) => {
 					warn!(?err, %room_id, "error loading joined room");
 					None
@@ -282,7 +286,8 @@ pub(crate) async fn build_sync_events(
 		})
 		.ready_fold(
 			(BTreeMap::new(), DeviceListUpdates::new()),
-			|(mut joined_rooms, mut all_updates), (room_id, joined_room, updates, newly_joined)| {
+			|(mut joined_rooms, mut all_updates),
+			 (room_id, joined_room, updates, newly_joined)| {
 				all_updates.merge(updates);
 
 				// Always include rooms the user just joined, even if the sync
@@ -429,8 +434,7 @@ pub(crate) async fn build_sync_events(
 			continue;
 		}
 		warn!("#779: loading recently-joined room {room_id} missed by iterator");
-		if let Ok((room, updates, _)) =
-			load_joined_room(services, context, room_id.clone()).await
+		if let Ok((room, updates, _)) = load_joined_room(services, context, room_id.clone()).await
 		{
 			device_list_updates.merge(updates);
 			joined_rooms.insert(room_id, room);

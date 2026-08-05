@@ -73,7 +73,9 @@ impl Database {
 	}
 
 	#[inline]
-	pub fn keys(&self) -> impl Iterator<Item = &MapsKey> + Send + '_ { self.maps.keys() }
+	pub fn keys(&self) -> impl Iterator<Item = &MapsKey> + Send + '_ {
+		self.maps.keys()
+	}
 }
 
 impl Index<&str> for Database {

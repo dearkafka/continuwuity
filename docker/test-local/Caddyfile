@@ -23,13 +23,9 @@ localhost {
     }
 }
 
-# Rauthy identity provider
+# Pocket ID identity provider
 localhost:8443 {
     tls /certs/localhost+2.pem /certs/localhost+2-key.pem
 
-    reverse_proxy rauthy:8443 {
-        transport http {
-            tls_insecure_skip_verify
-        }
-    }
+    reverse_proxy pocket-id:1411
 }

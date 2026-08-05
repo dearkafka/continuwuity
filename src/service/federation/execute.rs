@@ -90,11 +90,13 @@ where
 
 	debug!(%method, %url, "Sending request");
 	match client.execute(request).await {
-		| Ok(response) =>
+		| Ok(response) => {
 			self.handle_response::<T>(dest, actual, &method, &url, response)
-				.await,
-		| Err(error) =>
-			Err(handle_error(actual, &method, &url, error).expect_err("always returns error")),
+				.await
+		},
+		| Err(error) => {
+			Err(handle_error(actual, &method, &url, error).expect_err("always returns error"))
+		},
 	}
 }
 

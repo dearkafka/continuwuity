@@ -9,27 +9,34 @@ allow_registration = false
 allow_federation = false
 allow_local_presence = false
 
-# Local harness default: any authenticated Zitadel user gets a Matrix account.
-# Set this to false to exercise invite-only onboarding.
+# Local harness default: any authenticated Pocket ID user gets a Matrix account
+# after they clear Pocket ID's own invite gate.
+# Set this to false to exercise admin-managed Matrix-only onboarding.
 sso_allow_open_registration = true
 
 [global.well_known]
 client = "https://localhost"
 
-# Zitadel as OIDC identity provider
-# Copy this file to `continuwuity.toml` and fill in the local app credentials.
-[global.identity_provider.zitadel]
-brand = "zitadel"
-client_id = "REPLACE_WITH_LOCAL_ZITADEL_CLIENT_ID"
-client_secret = "REPLACE_WITH_LOCAL_ZITADEL_CLIENT_SECRET"
-issuer_url = "http://localhost:8080"
-discovery = false
-authorization_url = "http://localhost:8080/oauth/v2/authorize"
-token_url = "http://zitadel:8080/oauth/v2/token"
-userinfo_url = "http://zitadel:8080/oidc/v1/userinfo"
+# Pocket ID as OIDC identity provider
+# Copy this file to `continuwuity.toml`, then run:
+#   node ./pocket-id-admin.mjs bootstrap-client
+# The helper writes the generated secret to `shared/pocket-id-client-secret`.
+[global.identity_provider.pocket_id]
+brand = "pocket-id"
+client_id = "continuwuity-local"
+client_secret_file = "/run/secrets/pocket-id-client-secret"
+issuer_url = "https://localhost:8443"
+admin_api_url = "http://pocket-id:1411"
+admin_api_key_file = "/run/secrets/pocket-id-static-api-key"
+discovery = true
+discovery_url = "http://pocket-id:1411/.well-known/openid-configuration"
+callback_url = "https://localhost/_matrix/client/unstable/login/sso/callback/pocket_id"
 default = true
-# Set this to true only if you want verified-email-based linking to existing
-# local Matrix accounts.
-# trusted = true
 name = "fluiid.party"
 scope = ["openid", "profile", "email"]
+registration = true
+trusted = true
+
+# Pocket ID signup is intentionally token-gated in this harness.
+# Do not set registration_url unless you want Matrix "Register" clicks to jump
+# to a public Pocket ID signup page instead of the normal login flow.
