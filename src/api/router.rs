@@ -29,6 +29,16 @@ pub fn build(router: Router<State>, state: State) -> Router<State> {
 		.ruma_route(&client::get_login_types_route)
 		.ruma_route(&client::login_route)
 		.ruma_route(&client::login_token_route)
+		.ruma_route(&client::sso_login_route)
+		.ruma_route(&client::sso_login_with_provider_route)
+		.route(
+			"/_matrix/client/unstable/login/sso/callback/{idp_id}",
+			get(client::sso_callback_route),
+		)
+		.route("/_continuwuity/sso/token_submit", post(client::sso_token_submit_route))
+		.route("/_continuwuity/sso/link", post(client::sso_link_account_route))
+		.route("/_continuwuity/sso/link_page", get(client::sso_link_page_route))
+		.route("/_continuwuity/sso/token_page", get(client::sso_token_page_route))
 		.ruma_route(&client::whoami_route)
 		.ruma_route(&client::logout_route)
 		.ruma_route(&client::logout_all_route)

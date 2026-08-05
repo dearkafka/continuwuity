@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashSet};
+use std::{
+	collections::{BTreeMap, HashSet},
+	fmt::Write as _,
+};
 
 use api::client::{
 	full_user_deactivate, leave_room, recreate_push_rules_and_return, remote_leave_room,
@@ -230,6 +233,64 @@ impl crate::Context<'_> {
 		Ok(())
 	}
 
+	pub(super) async fn set_sso_email(&self, username: String, email: String) -> Result {
+		let user_id = parse_local_user_id(self.services, &username)?;
+
+		self.services
+			.sso
+			.sessions
+			.set_email(user_id.as_str(), &email)
+			.await;
+
+		self.write_str(&format!("Set email for {user_id}: `{email}`"))
+			.await
+	}
+
+	pub(super) async fn get_sso_email(&self, username: String) -> Result {
+		let user_id = parse_local_user_id(self.services, &username)?;
+
+		match self.services.sso.sessions.get_email(user_id.as_str()).await {
+			| Ok(email) => {
+				self.write_str(&format!("Email for {user_id}: `{email}`"))
+					.await
+			},
+			| Err(_) => self.write_str(&format!("No email set for {user_id}")).await,
+		}
+	}
+
+	pub(super) async fn remove_sso_email(&self, username: String) -> Result {
+		let user_id = parse_local_user_id(self.services, &username)?;
+
+		match self.services.sso.sessions.get_email(user_id.as_str()).await {
+			| Ok(email) => {
+				self.services
+					.sso
+					.sessions
+					.remove_email(user_id.as_str(), &email);
+				self.write_str(&format!("Removed email `{email}` for {user_id}"))
+					.await
+			},
+			| Err(_) => self.write_str(&format!("No email set for {user_id}")).await,
+		}
+	}
+
+	pub(super) async fn list_sso_emails(&self) -> Result {
+		let emails: Vec<(String, String)> =
+			self.services.sso.sessions.list_emails().collect().await;
+
+		if emails.is_empty() {
+			return self.write_str("No email mappings found.").await;
+		}
+
+		let mut msg = format!("Found {} email mapping(s):\n```\n", emails.len());
+		for (email, user_id) in &emails {
+			writeln!(msg, "{email} → {user_id}")?;
+		}
+		msg += "```";
+
+		self.write_str(&msg).await
+	}
+
 	pub(super) async fn deactivate_all(&self, no_leave_rooms: bool, force: bool) -> Result {
 		if self.body.len() < 2
 			|| !self.body[0].trim().starts_with("```")
@@ -366,8 +427,9 @@ impl crate::Context<'_> {
 		let body = rooms
 			.iter()
 			.map(|((id, members, name), sender)| match sender {
-				| Ok(user_id) =>
-					format!("{id}\tInviter: {user_id}\tMembers: {members}\tName: {name}"),
+				| Ok(user_id) => {
+					format!("{id}\tInviter: {user_id}\tMembers: {members}\tName: {name}")
+				},
 				| Err(_) => format!("{id}\tMembers: {members}\tName: {name}"),
 			})
 			.collect::<Vec<_>>()
@@ -1050,12 +1112,14 @@ impl crate::Context<'_> {
 			.get_email_for_localpart(user_id.localpart())
 			.await
 		{
-			| Some(email) =>
+			| Some(email) => {
 				self.write_str(&format!("{user_id} has the associated email address {email}."))
-					.await,
-			| None =>
+					.await
+			},
+			| None => {
 				self.write_str(&format!("{user_id} has no associated email address."))
-					.await,
+					.await
+			},
 		}
 	}
 
@@ -1075,9 +1139,10 @@ impl crate::Context<'_> {
 				self.write_str(&format!("{email} belongs to {user_id}."))
 					.await
 			},
-			| None =>
+			| None => {
 				self.write_str(&format!("No user has {email} as their email address."))
-					.await,
+					.await
+			},
 		}
 	}
 
@@ -1098,11 +1163,12 @@ impl crate::Context<'_> {
 			.await;
 
 		match (current_email, new_email) {
-			| (None, None) =>
+			| (None, None) => {
 				self.write_str(&format!(
 					"{user_id} already had no associated email. No changes have been made."
 				))
-				.await,
+				.await
+			},
 			| (current_email, Some(new_email)) => {
 				self.services
 					.threepid

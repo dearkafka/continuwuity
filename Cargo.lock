@@ -912,8 +912,10 @@ dependencies = [
  "serde_html_form",
  "serde_json",
  "sha1 0.11.0",
+ "sha2 0.11.0",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1102,6 +1104,7 @@ dependencies = [
  "sd-notify",
  "serde",
  "serde-saphyr",
+ "serde_html_form",
  "serde_json",
  "serde_urlencoded",
  "sha2 0.11.0",

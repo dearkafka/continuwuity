@@ -57,7 +57,7 @@ use crate::{Result, err, error::Error, utils::sys};
 ### For more information, see:
 ### https://continuwuity.org/configuration.html
 "#,
-	ignore = "config_paths catchall"
+	ignore = "config_paths catchall identity_provider"
 )]
 pub struct Config {
 	// Paths to config file(s). Not supposed to be set manually in the config file,
@@ -2197,6 +2197,25 @@ pub struct Config {
 	#[serde(default)]
 	pub allow_web_indexing: bool,
 
+	/// SSO identity providers for OAuth2/OIDC login.
+	///
+	/// Each entry configures an external OAuth2 provider (Google, GitHub,
+	/// etc.) that users can authenticate with.
+	///
+	/// display: nested
+	#[serde(default)]
+	pub identity_provider: BTreeMap<String, IdentityProvider>,
+
+	/// Whether to allow auto-registration of new accounts via SSO when
+	/// no email allowlist entry or registration token is provided.
+	///
+	/// When false (default), users must either be in the email allowlist
+	/// or present a valid registration token to create an account via SSO.
+	///
+	/// default: false
+	#[serde(default)]
+	pub sso_allow_open_registration: bool,
+
 	/// Configuration for antispam support
 	/// display: nested
 	#[serde(default)]
@@ -2624,6 +2643,205 @@ pub enum OidcProfileKeyImportMode {
 	OnRegistration,
 	OnLogin,
 }
+
+/// Configuration for an external OAuth2/OIDC identity provider used for
+/// SSO login.
+#[derive(Clone, Debug, Deserialize)]
+pub struct IdentityProvider {
+	/// Provider brand identifier for client button styling.
+	/// Recognized values: "google", "github", "gitlab", "apple", "facebook",
+	/// "twitter"
+	///
+	/// example: "google"
+	#[serde(default)]
+	pub brand: String,
+
+	/// OAuth2 client ID registered with the provider.
+	///
+	/// example: "123456.apps.googleusercontent.com"
+	#[serde(default)]
+	pub client_id: String,
+
+	/// OAuth2 client secret. Prefer `client_secret_file` for production.
+	///
+	/// example: "GOCSPX-..."
+	#[serde(default)]
+	pub client_secret: Option<String>,
+
+	/// Path to a file containing the OAuth2 client secret.
+	///
+	/// example: "/run/secrets/google_oauth"
+	#[serde(default)]
+	pub client_secret_file: Option<PathBuf>,
+
+	/// Base URL for an identity-provider admin API that can mint signup
+	/// invites for this provider.
+	///
+	/// This is intended for Pocket ID-style admin APIs, allowing
+	/// `!admin sso-invite issue` to create invite links without shell access.
+	///
+	/// example: "http://pocket-id:1411"
+	#[serde(default)]
+	pub admin_api_url: Option<Url>,
+
+	/// Admin API key used when issuing SSO invite links. Prefer
+	/// `admin_api_key_file` for production.
+	#[serde(default)]
+	pub admin_api_key: Option<String>,
+
+	/// Path to a file containing the admin API key.
+	///
+	/// example: "/run/secrets/pocket-id-static-api-key"
+	#[serde(default)]
+	pub admin_api_key_file: Option<PathBuf>,
+
+	/// OIDC issuer URL. When set, endpoints are auto-discovered via
+	/// `{issuer_url}/.well-known/openid-configuration`.
+	///
+	/// example: "https://accounts.google.com"
+	#[serde(default)]
+	pub issuer_url: Option<Url>,
+
+	/// OAuth2 authorization endpoint URL.
+	/// Auto-discovered from `issuer_url` if not set.
+	///
+	/// example: "https://accounts.google.com/o/oauth2/v2/auth"
+	#[serde(default)]
+	pub authorization_url: Option<Url>,
+
+	/// OAuth2 token endpoint URL.
+	/// Auto-discovered from `issuer_url` if not set.
+	///
+	/// example: "https://oauth2.googleapis.com/token"
+	#[serde(default)]
+	pub token_url: Option<Url>,
+
+	/// OAuth2 userinfo endpoint URL.
+	/// Auto-discovered from `issuer_url` if not set.
+	///
+	/// example: "https://openidconnect.googleapis.com/v1/userinfo"
+	#[serde(default)]
+	pub userinfo_url: Option<Url>,
+
+	/// OAuth2 revocation endpoint URL.
+	///
+	/// example: "https://oauth2.googleapis.com/revoke"
+	#[serde(default)]
+	pub revocation_url: Option<Url>,
+
+	/// Callback URL registered with the provider. If not set, derived from
+	/// `well_known.client`.
+	///
+	/// example: "https://mx.example.com/_matrix/client/unstable/login/sso/callback/google"
+	#[serde(default)]
+	pub callback_url: Option<Url>,
+
+	/// User registration URL at the identity provider. When set and the
+	/// client signals a registration intent (MSC3824 `action=register`),
+	/// the user is redirected here instead of to `authorization_url`.
+	/// The provider's authorize URL is appended as `?redirect_uri=` so the
+	/// user lands back in the login flow after registering.
+	///
+	/// example: "https://auth.example.com/auth/v1/users/register"
+	#[serde(default)]
+	pub registration_url: Option<Url>,
+
+	/// Whether to auto-discover endpoints via OIDC discovery.
+	///
+	/// default: true
+	#[serde(default = "default_idp_discovery")]
+	pub discovery: bool,
+
+	/// OIDC discovery URL override.
+	///
+	/// example: "https://accounts.google.com/.well-known/openid-configuration"
+	#[serde(default)]
+	pub discovery_url: Option<Url>,
+
+	/// Extra path prepended during discovery (e.g., "login/oauth/" for
+	/// GitHub).
+	///
+	/// default: ""
+	#[serde(default)]
+	pub base_path: String,
+
+	/// Whether this is the default provider when no idpId is specified.
+	///
+	/// default: false
+	#[serde(default)]
+	pub default: bool,
+
+	/// Display name for this provider shown in client UI.
+	///
+	/// example: "Google"
+	#[serde(default)]
+	pub name: Option<String>,
+
+	/// MXC URI for the provider icon.
+	///
+	/// example: "mxc://example.org/abc123"
+	#[serde(default)]
+	pub icon: Option<String>,
+
+	/// OAuth2 scopes to request.
+	///
+	/// default: ["openid", "email", "profile"]
+	#[serde(default = "default_idp_scopes")]
+	pub scope: Vec<String>,
+
+	/// Claims to consider for deriving the Matrix username, in priority
+	/// order.
+	///
+	/// default: ["preferred_username", "username", "email"]
+	#[serde(default = "default_idp_userid_claims")]
+	pub userid_claims: Vec<String>,
+
+	/// Grant session duration in seconds. The OAuth2 authorization must
+	/// complete within this time.
+	///
+	/// default: 300
+	#[serde(default = "default_idp_grant_session_duration")]
+	pub grant_session_duration: Option<u64>,
+
+	/// Whether new user registration is allowed through this provider.
+	///
+	/// default: true
+	#[serde(default = "default_idp_registration")]
+	pub registration: bool,
+
+	/// Whether to trust this provider for linking to existing Matrix
+	/// accounts via email allowlist and for persisting email mappings from
+	/// SSO claims.
+	///
+	/// Trusted email-based linking requires the provider to supply a
+	/// verified email claim.
+	///
+	/// default: false
+	#[serde(default)]
+	pub trusted: bool,
+
+	/// User-group IDs to attach to newly issued SSO invite links.
+	///
+	/// For Pocket ID this maps to the signup-token `userGroupIds` field,
+	/// allowing the homeserver to gate Matrix access to a dedicated group
+	/// such as `matrix-users`.
+	#[serde(default)]
+	pub invite_user_group_ids: Vec<String>,
+}
+
+fn default_idp_discovery() -> bool { true }
+
+fn default_idp_scopes() -> Vec<String> {
+	vec!["openid".to_owned(), "email".to_owned(), "profile".to_owned()]
+}
+
+fn default_idp_userid_claims() -> Vec<String> {
+	vec!["preferred_username".to_owned(), "username".to_owned(), "email".to_owned()]
+}
+
+fn default_idp_grant_session_duration() -> Option<u64> { Some(300) }
+
+fn default_idp_registration() -> bool { true }
 
 const DEPRECATED_KEYS: &[&str] = &[
 	"cache_capacity",

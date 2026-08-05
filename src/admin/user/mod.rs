@@ -41,6 +41,30 @@ pub enum UserCommand {
 		convert_to_local_account: bool,
 	},
 
+	/// Set the SSO allowlist email address for a user (used for SSO
+	/// account-linking gating).
+	SetSsoEmail {
+		/// Username of the user
+		username: String,
+		/// Email address to associate
+		email: String,
+	},
+
+	/// Get the SSO allowlist email address for a user.
+	GetSsoEmail {
+		/// Username of the user
+		username: String,
+	},
+
+	/// Remove the SSO allowlist email address for a user.
+	RemoveSsoEmail {
+		/// Username of the user
+		username: String,
+	},
+
+	/// List all SSO allowlist user-email mappings.
+	ListSsoEmails,
+
 	/// Get a user's associated email address.
 	GetEmail {
 		user_id: String,

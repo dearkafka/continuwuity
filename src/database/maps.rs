@@ -478,6 +478,53 @@ pub(super) static MAPS: &[Descriptor] = &[
 		name: "logintoken_expiresatuserid",
 		..descriptor::RANDOM_SMALL
 	},
+	// SSO (external identity provider) maps
+	Descriptor {
+		name: "oauthid_session",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "oauthuniqid_oauthid",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "userid_oauthid",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "email_userid",
+		..descriptor::RANDOM_SMALL
+	},
+	Descriptor {
+		name: "userid_email",
+		..descriptor::RANDOM_SMALL
+	},
+	// Retired maps from the removed custom OIDC server (data may still
+	// exist in databases created by pre-v26 fluiid-party builds)
+	Descriptor {
+		name: "oidc_signingkey",
+		..descriptor::DROPPED
+	},
+	Descriptor {
+		name: "oidcclientid_registration",
+		..descriptor::DROPPED
+	},
+	Descriptor {
+		name: "oidccode_authsession",
+		..descriptor::DROPPED
+	},
+	Descriptor {
+		name: "oidcreqid_authrequest",
+		..descriptor::DROPPED
+	},
+	Descriptor {
+		name: "oidcrefresh_session",
+		..descriptor::DROPPED
+	},
+	Descriptor {
+		name: "oidcuserdevice_refresh",
+		..descriptor::DROPPED
+	},
 	Descriptor {
 		name: "roomuserid_lastnotificationread",
 		..descriptor::RANDOM

@@ -20,6 +20,7 @@ pub(crate) mod oidc;
 pub(crate) mod query;
 pub(crate) mod room;
 pub(crate) mod server;
+pub(crate) mod sso_invite;
 pub(crate) mod token;
 pub(crate) mod user;
 

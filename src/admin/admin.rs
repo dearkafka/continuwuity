@@ -12,6 +12,7 @@ use crate::{
 	query::{self, QueryCommand},
 	room::{self, RoomCommand},
 	server::{self, ServerCommand},
+	sso_invite::{self, SsoInviteCommand},
 	token::{self, TokenCommand},
 	user::{self, UserCommand},
 };
@@ -30,6 +31,10 @@ pub enum AdminCommand {
 	/// Commands for managing registration tokens
 	#[command(subcommand)]
 	Token(TokenCommand),
+
+	/// Commands for managing SSO invite links
+	#[command(subcommand)]
+	SsoInvite(SsoInviteCommand),
 
 	/// Commands for managing OIDC
 	#[command(subcommand)]
@@ -84,6 +89,11 @@ pub(super) async fn process(command: AdminCommand, context: &Context<'_>) -> Res
 			// token commands are all restricted
 			context.bail_restricted()?;
 			token::process(command, context).await
+		},
+		| SsoInvite(command) => {
+			// invite issuance talks to the identity provider's admin API
+			context.bail_restricted()?;
+			sso_invite::process(command, context).await
 		},
 		| Oidc(command) => {
 			// OIDC commands are all restricted

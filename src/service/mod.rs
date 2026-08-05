@@ -35,6 +35,8 @@ pub mod registration_tokens;
 pub mod rooms;
 pub mod sending;
 pub mod server_keys;
+pub mod sso;
+pub mod sso_invites;
 pub mod sync;
 pub mod threepid;
 pub mod transactions;
